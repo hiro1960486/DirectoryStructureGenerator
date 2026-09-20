@@ -1,6 +1,6 @@
 """Modern PySide6 user interface.
 
-Version: 2.0.2
+Version: 2.0.3
 Updated: 2026-09-20
 Author: hiro1960
 """
@@ -116,6 +116,8 @@ class PathDropEdit(QComboBox):
 
 
 class MainWindow(QMainWindow):
+    PREVIEW_LINE_LIMIT = 15000
+
     def __init__(self) -> None:
         super().__init__()
         self.config = load_config()
@@ -169,6 +171,12 @@ class MainWindow(QMainWindow):
         grid = QGridLayout(paths)
         self.source_combo = PathDropEdit()
         self.output_combo = PathDropEdit()
+        self.source_combo.setToolTip("参照ボタンで選ぶか、エクスプローラーからフォルダーをドロップします")
+        self.output_combo.setToolTip("参照ボタンで選ぶか、エクスプローラーからフォルダーをドロップします")
+        self.source_combo.pathDropped.connect(self._source_path_selected)
+        self.output_combo.pathDropped.connect(
+            lambda path: self.statusBar().showMessage(f"出力先を設定しました: {path}", 4000)
+        )
         source_button = QPushButton("参照…")
         output_button = QPushButton("参照…")
         source_button.clicked.connect(self.choose_source)
@@ -179,6 +187,9 @@ class MainWindow(QMainWindow):
         grid.addWidget(QLabel("出力先"), 1, 0)
         grid.addWidget(self.output_combo, 1, 1)
         grid.addWidget(output_button, 1, 2)
+        drop_hint = QLabel("フォルダーは、エクスプローラーから入力欄へドラッグ＆ドロップできます")
+        drop_hint.setStyleSheet("color:#6b86aa;background:transparent;font-size:9pt")
+        grid.addWidget(drop_hint, 2, 1, 1, 2)
         grid.setColumnStretch(1, 1)
         outer.addWidget(paths)
 
@@ -220,7 +231,15 @@ class MainWindow(QMainWindow):
         filter_layout.addRow(self.hidden_check)
         filter_layout.addRow(self.empty_check)
         filter_layout.addRow(self.symlink_check)
-        settings_layout.addWidget(filters)
+        filters.setMinimumHeight(365)
+        filter_scroll = QScrollArea()
+        filter_scroll.setObjectName("filterScroll")
+        filter_scroll.setWidgetResizable(True)
+        filter_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        filter_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        filter_scroll.setMinimumHeight(190)
+        filter_scroll.setWidget(filters)
+        settings_layout.addWidget(filter_scroll, 1)
 
         formats = QGroupBox("3. 出力形式")
         format_layout = QHBoxLayout(formats)
@@ -247,7 +266,6 @@ class MainWindow(QMainWindow):
         actions.addWidget(self.generate_button)
         actions.addWidget(self.cancel_button)
         settings_layout.addLayout(actions)
-        settings_layout.addStretch()
 
         preview_panel = QWidget()
         preview_layout = QVBoxLayout(preview_panel)
@@ -270,14 +288,8 @@ class MainWindow(QMainWindow):
         self.stats_label = QLabel("フォルダー 0  ｜  ファイル 0  ｜  0 B  ｜  除外 0")
         preview_layout.addWidget(self.stats_label)
 
-        settings_scroll = QScrollArea()
-        settings_scroll.setObjectName("settingsScroll")
-        settings_scroll.setWidgetResizable(True)
-        settings_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        settings_scroll.setMinimumWidth(420)
-        settings_scroll.setWidget(settings_panel)
-        splitter.addWidget(settings_scroll)
+        settings_panel.setMinimumWidth(420)
+        splitter.addWidget(settings_panel)
         splitter.addWidget(preview_panel)
         splitter.setSizes([470, 710])
         outer.addWidget(splitter, 1)
@@ -451,16 +463,51 @@ class MainWindow(QMainWindow):
         self._set_filter_ui(current)
 
     def choose_source(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "対象フォルダーを選択", self.source_combo.currentText())
+        path = self._choose_directory("対象フォルダーを選択", self.source_combo.currentText())
         if path:
-            self.source_combo.setCurrentText(path)
-            if not self.output_combo.currentText().strip():
-                self.output_combo.setCurrentText(str(Path(path).parent / "DirectoryTree_Output"))
+            self._source_path_selected(path)
 
     def choose_output(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "出力先を選択", self.output_combo.currentText())
+        path = self._choose_directory("出力先を選択", self.output_combo.currentText())
         if path:
             self.output_combo.setCurrentText(path)
+
+    def _choose_directory(self, title: str, initial_path: str) -> str:
+        """Use the Qt folder picker to avoid slow Windows shell icon extensions."""
+        initial = Path(initial_path.strip()) if initial_path.strip() else Path.home()
+        if not initial.is_dir():
+            initial = Path.home()
+        dialog = QFileDialog(self, title, str(initial))
+        dialog.setFileMode(QFileDialog.FileMode.Directory)
+        dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+        if dialog.exec() == 0:
+            return ""
+        selected = dialog.selectedFiles()
+        return selected[0] if selected else ""
+
+    @Slot(str)
+    def _source_path_selected(self, path: str) -> None:
+        self.source_combo.setCurrentText(path)
+        if not self.output_combo.currentText().strip():
+            self.output_combo.setCurrentText(str(Path(path).parent / "DirectoryTree_Output"))
+        self.statusBar().showMessage(f"対象フォルダーを設定しました: {path}", 4000)
+
+    def dragEnterEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        for url in event.mimeData().urls():
+            if url.isLocalFile() and Path(url.toLocalFile()).is_dir():
+                event.acceptProposedAction()
+                return
+
+    def dropEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        for url in event.mimeData().urls():
+            if not url.isLocalFile():
+                continue
+            path = url.toLocalFile()
+            if Path(path).is_dir():
+                self._source_path_selected(path)
+                event.acceptProposedAction()
+                return
 
     def _validate(self, require_format: bool) -> tuple[Path, Path] | None:
         source = Path(self.source_combo.currentText().strip())
@@ -530,7 +577,16 @@ class MainWindow(QMainWindow):
     def on_scan_finished(self, result: ScanResult) -> None:
         self.result = result
         self._set_running(False)
-        self.preview.setPlainText("\n".join(tree_lines(result.root)))
+        lines = tree_lines(result.root)
+        if len(lines) > self.PREVIEW_LINE_LIMIT:
+            hidden_count = len(lines) - self.PREVIEW_LINE_LIMIT
+            lines = lines[:self.PREVIEW_LINE_LIMIT]
+            lines.extend([
+                "",
+                f"…以降 {hidden_count:,} 行は、画面の応答性を保つため省略しました。",
+                "生成されるTXT・HTML・CSV・JSONには全件が出力されます。",
+            ])
+        self.preview.setPlainText("\n".join(lines))
         stats = result.stats
         self.stats_label.setText(
             f"フォルダー {stats.folders:,}  ｜  ファイル {stats.files:,}  ｜  "

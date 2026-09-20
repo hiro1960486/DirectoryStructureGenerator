@@ -19,6 +19,21 @@ def names(result):
 
 
 class ScannerTests(unittest.TestCase):
+    def test_regular_directories_are_not_cycle_deduplicated(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in ("00_plan", "55_salon", "99_output", "generator"):
+                (root / name).mkdir()
+            scanner = DirectoryScanner(FilterSettings(include_empty_dirs=True))
+
+            result = scanner.scan(root)
+
+            self.assertEqual(
+                [child.name for child in result.root.children],
+                ["00_plan", "55_salon", "99_output", "generator"],
+            )
+            self.assertEqual(scanner._visited_directories, set())
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)

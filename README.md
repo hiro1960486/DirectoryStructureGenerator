@@ -1,8 +1,8 @@
-# Directory Structure Generator Ver.2.0.2
+# Directory Structure Generator Ver.2.0.3
 
 フォルダー構成を走査し、必要な項目だけを **TXT / HTML / CSV / JSON** に出力するWindows向けGUIアプリです。
 
-- Version: 2.0.2
+- Version: 2.0.3
 - Updated: 2026-09-20
 - Author: hiro1960
 - UI: PySide6
@@ -12,7 +12,11 @@
 ## 今回の主な改善
 
 - Windows 11になじむダーク／ライト対応UI
+- フォルダー入力欄と画面全体へのドラッグ＆ドロップ
+- フィルター部分だけをスクロールし、出力形式と実行ボタンを常時表示
 - 大きなフォルダーでも画面を固めにくいバックグラウンド走査
+- 大量データ時のプレビュー表示を15,000行に制限（出力ファイルは全件）
+- Windowsドライブで異なるフォルダーを同一と誤判定する問題を修正
 - 走査の中止
 - ツリーの事前プレビューと検索・コピー
 - フォルダー数、ファイル数、合計容量、除外数、エラー数の表示
@@ -71,6 +75,8 @@ target               Rust・Javaなどの生成物
 4. `release`に配布用ZIPとZIPのSHA256ができます。
 
 EXEはPyInstallerの`onedir`形式です。`DirectoryStructureGeneratorGUI.exe`だけを取り出さず、フォルダー一式で配布してください。EXEのハッシュは`SHA256_EXE.txt`へ、配布ZIPのハッシュは`.sha256.txt`へ自動出力されます。
+
+動作確認用にEXEだけを素早く作る場合は、`BUILD_FAST.bat`を使用します。配布ZIPは作成しません。完全に作り直す必要がある場合だけ、コマンドプロンプトから`build_exe.bat clean`を実行します。
 
 ## ショートカット
 

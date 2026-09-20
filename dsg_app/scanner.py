@@ -35,7 +35,18 @@ class DirectoryScanner:
         self._excluded_exts = {self._normalize_ext(item) for item in settings.excluded_extensions if item.strip()}
         self._included_exts = {self._normalize_ext(item) for item in settings.included_extensions if item.strip()}
         self._patterns = [item.strip() for item in settings.patterns if item.strip()]
-        self._visited_directories: set[tuple[int, int]] = set()
+        self._visited_directories: set[str] = set()
+
+    @staticmethod
+    def _directory_identity(path: Path) -> str:
+        """Return a stable identity for cycle detection when following links.
+
+        Some Windows drives return zero or repeated inode numbers.  Using
+        ``(st_dev, st_ino)`` there can make unrelated folders look identical.
+        The resolved path is stable for the link-cycle check and avoids that
+        false deduplication.
+        """
+        return os.path.normcase(os.path.abspath(os.path.realpath(path)))
 
     @staticmethod
     def _normalize_ext(value: str) -> str:
@@ -89,7 +100,8 @@ class DirectoryScanner:
         try:
             stat = source.stat()
             root = ScanNode(source.name or str(source), source, Path("."), True, 0, modified=stat.st_mtime)
-            self._visited_directories.add((stat.st_dev, stat.st_ino))
+            if self.settings.follow_symlinks:
+                self._visited_directories.add(self._directory_identity(source))
             self.stats.folders = 1
             root.children = self._walk(source, Path("."), 0)
         finally:
@@ -118,8 +130,10 @@ class DirectoryScanner:
                 self.progress(str(relative), self.stats)
             try:
                 is_symlink = entry.is_symlink()
+                is_junction = bool(getattr(path, "is_junction", lambda: False)())
+                is_link = is_symlink or is_junction
                 is_dir = entry.is_dir(follow_symlinks=self.settings.follow_symlinks)
-                if is_symlink and not self.settings.follow_symlinks:
+                if is_link and not self.settings.follow_symlinks:
                     self.stats.excluded += 1
                     continue
                 if is_dir:
@@ -127,12 +141,16 @@ class DirectoryScanner:
                         self.stats.excluded += 1
                         continue
                     stat = entry.stat(follow_symlinks=self.settings.follow_symlinks)
-                    identity = (stat.st_dev, stat.st_ino)
-                    if identity in self._visited_directories:
-                        self.stats.excluded += 1
-                        continue
-                    self._visited_directories.add(identity)
-                    node = ScanNode(entry.name, path, relative, True, depth + 1, modified=stat.st_mtime, is_symlink=is_symlink)
+                    if self.settings.follow_symlinks:
+                        identity = self._directory_identity(path)
+                        if identity in self._visited_directories:
+                            self.stats.excluded += 1
+                            continue
+                        self._visited_directories.add(identity)
+                    node = ScanNode(
+                        entry.name, path, relative, True, depth + 1,
+                        modified=stat.st_mtime, is_symlink=is_link,
+                    )
                     self.stats.folders += 1
                     node.children = self._walk(path, relative, depth + 1)
                     if self.settings.include_empty_dirs or node.children:
@@ -147,7 +165,7 @@ class DirectoryScanner:
                     stat = entry.stat(follow_symlinks=self.settings.follow_symlinks)
                     node = ScanNode(
                         entry.name, path, relative, False, depth + 1,
-                        size=stat.st_size, modified=stat.st_mtime, is_symlink=is_symlink,
+                        size=stat.st_size, modified=stat.st_mtime, is_symlink=is_link,
                     )
                     nodes.append(node)
                     self.stats.files += 1

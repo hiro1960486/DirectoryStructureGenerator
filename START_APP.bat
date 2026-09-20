@@ -1,13 +1,13 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
-title Directory Structure Generator Ver.2.0.2
+title Directory Structure Generator Ver.2.0.3
 
 set "APP_PYTHON=%~dp0.venv\Scripts\python.exe"
 set "STARTUP_LOG=%~dp0startup_error.log"
 
 echo ============================================================
-echo Directory Structure Generator Ver.2.0.2
+echo Directory Structure Generator Ver.2.0.3
 echo Safe launcher and automatic setup
 echo ============================================================
 echo.

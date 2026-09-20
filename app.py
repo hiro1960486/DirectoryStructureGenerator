@@ -1,6 +1,6 @@
 """Directory Structure Generator entry point with visible crash reporting.
 
-Version: 2.0.2
+Version: 2.0.3
 Updated: 2026-09-20
 Author: hiro1960
 """

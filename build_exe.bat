@@ -4,12 +4,16 @@ cd /d "%~dp0"
 title Directory Structure Generator - EXE Build
 
 set "APP_NAME=DirectoryStructureGeneratorGUI"
-set "APP_VERSION=2.0.2"
+set "APP_VERSION=2.0.3"
 set "APP_PYTHON=%~dp0.venv\Scripts\python.exe"
 set "BUILD_LOG=%~dp0build_log.txt"
 set "DIST_DIR=%~dp0dist\%APP_NAME%"
 set "RELEASE_DIR=%~dp0release"
 set "ZIP_PATH=%~dp0release\%APP_NAME%_Ver%APP_VERSION%_Windows_x64.zip"
+set "CLEAN_BUILD=0"
+set "SKIP_ZIP=0"
+if /i "%~1"=="clean" set "CLEAN_BUILD=1"
+if /i "%~1"=="nozip" set "SKIP_ZIP=1"
 
 echo ============================================================
 echo Directory Structure Generator Ver.%APP_VERSION%
@@ -58,35 +62,55 @@ echo [4/7] Running automatic tests...
 "%APP_PYTHON%" -m unittest discover -s "%~dp0tests" -v >>"%BUILD_LOG%" 2>&1
 if errorlevel 1 goto test_failed
 
-echo [5/7] Cleaning previous build output...
-if exist "%~dp0build" rmdir /s /q "%~dp0build"
+echo [5/7] Preparing build output...
+if "%CLEAN_BUILD%"=="1" (
+    echo Clean build mode: removing the PyInstaller cache...
+    if exist "%~dp0build" rmdir /s /q "%~dp0build"
+    if exist "%~dp0%APP_NAME%.spec" del /q "%~dp0%APP_NAME%.spec"
+) else (
+    echo Fast build mode: reusing the PyInstaller cache.
+)
 if exist "%DIST_DIR%" rmdir /s /q "%DIST_DIR%"
-if exist "%~dp0%APP_NAME%.spec" del /q "%~dp0%APP_NAME%.spec"
 if not exist "%RELEASE_DIR%" mkdir "%RELEASE_DIR%"
 
 echo [6/7] Building the Windows application...
 echo This step may take several minutes. Please wait...
 "%APP_PYTHON%" -m PyInstaller ^
   --noconfirm ^
-  --clean ^
   --windowed ^
   --onedir ^
   --name "%APP_NAME%" ^
-  --collect-all PySide6 ^
   "%~dp0app.py" >>"%BUILD_LOG%" 2>&1
 if errorlevel 1 goto build_failed
 
 if not exist "%DIST_DIR%\%APP_NAME%.exe" goto exe_missing
 if exist "%~dp0README.md" copy /y "%~dp0README.md" "%DIST_DIR%\README.md" >nul
 
+if "%SKIP_ZIP%"=="1" goto build_completed
+
 echo [7/7] Creating ZIP and SHA256 files...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$exe=Join-Path $env:DIST_DIR ($env:APP_NAME+'.exe'); $hash=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash; Set-Content -LiteralPath (Join-Path $env:DIST_DIR 'SHA256_EXE.txt') -Encoding UTF8 -Value (($env:APP_NAME+'.exe  ')+$hash)" >>"%BUILD_LOG%" 2>&1
 if errorlevel 1 goto build_failed
 
 if exist "%ZIP_PATH%" del /q "%ZIP_PATH%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path (Join-Path $env:DIST_DIR '*') -DestinationPath $env:ZIP_PATH -Force; $hash=(Get-FileHash -LiteralPath $env:ZIP_PATH -Algorithm SHA256).Hash; Set-Content -LiteralPath ($env:ZIP_PATH+'.sha256.txt') -Encoding UTF8 -Value ((Split-Path $env:ZIP_PATH -Leaf)+'  '+$hash)" >>"%BUILD_LOG%" 2>&1
+where tar.exe >nul 2>&1
+if errorlevel 1 goto powershell_zip
+pushd "%DIST_DIR%"
+tar.exe -a -c -f "%ZIP_PATH%" * >>"%BUILD_LOG%" 2>&1
+set "ZIP_EXIT=%ERRORLEVEL%"
+popd
+if not "%ZIP_EXIT%"=="0" goto build_failed
+goto zip_created
+
+:powershell_zip
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path (Join-Path $env:DIST_DIR '*') -DestinationPath $env:ZIP_PATH -Force" >>"%BUILD_LOG%" 2>&1
 if errorlevel 1 goto build_failed
 
+:zip_created
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$hash=(Get-FileHash -LiteralPath $env:ZIP_PATH -Algorithm SHA256).Hash; Set-Content -LiteralPath ($env:ZIP_PATH+'.sha256.txt') -Encoding UTF8 -Value ((Split-Path $env:ZIP_PATH -Leaf)+'  '+$hash)" >>"%BUILD_LOG%" 2>&1
+if errorlevel 1 goto build_failed
+
+:build_completed
 >>"%BUILD_LOG%" echo [%date% %time%] Build completed successfully.
 echo.
 echo ============================================================
@@ -94,11 +118,20 @@ echo BUILD COMPLETED SUCCESSFULLY
 echo ============================================================
 echo EXE:
 echo %DIST_DIR%\%APP_NAME%.exe
+if "%SKIP_ZIP%"=="1" (
+    echo.
+    echo ZIP creation was skipped for this fast test build.
+) else (
+    echo.
+    echo Distribution ZIP:
+    echo %ZIP_PATH%
+)
 echo.
-echo Distribution ZIP:
-echo %ZIP_PATH%
-echo.
-explorer "%RELEASE_DIR%"
+if "%SKIP_ZIP%"=="1" (
+    explorer "%DIST_DIR%"
+) else (
+    explorer "%RELEASE_DIR%"
+)
 pause
 exit /b 0
 
