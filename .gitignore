@@ -9,3 +9,4 @@ release/
 *.log
 output/*
 !output/.gitkeep
+build_log.txt
