@@ -1,4 +1,4 @@
-Directory Structure Generator Ver.2.0.3
+Directory Structure Generator Ver.2.2.0
 ========================================
 
 【起動手順】
@@ -25,6 +25,6 @@ ZIPを開いた画面の中から、直接BATを実行しないでください�
 
 相談するときは、startup_error.logを添付してください。
 
-Version: 2.0.3
-Updated: 2026-09-20
+Version: 2.2.0
+Updated: 2026-09-21
 Author: hiro1960
