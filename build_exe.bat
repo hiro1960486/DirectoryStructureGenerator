@@ -4,7 +4,7 @@ cd /d "%~dp0"
 title Directory Structure Generator - EXE Build
 
 set "APP_NAME=DirectoryStructureGeneratorGUI"
-set "APP_VERSION=2.1.0"
+set "APP_VERSION=2.2.0"
 set "APP_PYTHON=%~dp0.venv\Scripts\python.exe"
 set "BUILD_LOG=%~dp0build_log.txt"
 set "DIST_DIR=%~dp0dist\%APP_NAME%"

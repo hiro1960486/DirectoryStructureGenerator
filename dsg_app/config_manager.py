@@ -20,6 +20,7 @@ def default_config() -> dict[str, Any]:
     return {
         "config_version": 2, "app_version": APP_VERSION, "theme": "dark",
         "source": "", "output": "", "source_history": [], "output_history": [],
+        "organizer_destinations": [],
         "formats": {"txt": True, "html": True, "csv": True, "json": False},
         "filters": FilterSettings().to_dict(), "preset": "開発用おすすめ",
         "window": {"width": 1240, "height": 820},
