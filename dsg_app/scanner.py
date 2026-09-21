@@ -16,6 +16,20 @@ class ScanCancelled(RuntimeError):
 
 
 class DirectoryScanner:
+    @staticmethod
+    def _canonical_path(path: Path) -> str:
+        """Return one comparable path form on every supported platform.
+
+        Windows temporary folders can be exposed through both a short (8.3)
+        name and their long name.  Resolving the path before comparison keeps
+        an output folder excluded even when those two spellings differ.
+        """
+        try:
+            resolved = Path(path).resolve(strict=False)
+        except OSError:
+            resolved = Path(os.path.abspath(path))
+        return os.path.normcase(os.path.realpath(resolved))
+
     def __init__(
         self,
         settings: FilterSettings,
@@ -29,7 +43,7 @@ class DirectoryScanner:
         self.stats = ScanStats()
         self._visited = 0
         self._excluded_absolute = {
-            os.path.normcase(os.path.abspath(path)) for path in (excluded_absolute_paths or [])
+            self._canonical_path(path) for path in (excluded_absolute_paths or [])
         }
         self._excluded_dirs = {item.casefold() for item in settings.excluded_dirs if item.strip()}
         self._excluded_exts = {self._normalize_ext(item) for item in settings.excluded_extensions if item.strip()}
@@ -67,7 +81,7 @@ class DirectoryScanner:
         return any(fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(posix, pattern) for pattern in self._patterns)
 
     def _excluded_common(self, path: Path, relative: Path, name: str) -> bool:
-        if os.path.normcase(os.path.abspath(path)) in self._excluded_absolute:
+        if self._canonical_path(path) in self._excluded_absolute:
             return True
         if not self.settings.include_hidden and self._is_hidden(path, name):
             return True
