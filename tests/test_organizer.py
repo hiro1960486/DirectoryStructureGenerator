@@ -66,6 +66,18 @@ class OrganizerTests(unittest.TestCase):
         self.assertEqual(sanitize_filename('bad:name?.txt'), "bad_name_.txt")
         self.assertEqual(sanitize_filename("CON.txt"), "_CON.txt")
 
+    def test_individual_name_override_keeps_original_extension(self):
+        original = self.source / "docs" / "old.txt"
+        original.write_text("original", encoding="utf-8")
+
+        plans = build_copy_plans(
+            [detail(original, "docs/old.txt")], self.destination, "{name}",
+            keep_subfolders=False, collision="number",
+            name_overrides={str(original): "わかりやすい名前"},
+        )
+
+        self.assertEqual(plans[0].destination.name, "わかりやすい名前.txt")
+
     def test_cancel_is_logged_without_copying(self):
         original = self.source / "docs" / "cancel.txt"
         original.write_text("keep", encoding="utf-8")

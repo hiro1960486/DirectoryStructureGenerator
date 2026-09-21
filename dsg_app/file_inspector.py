@@ -1,6 +1,6 @@
-"""Read-only metadata inspection for general files and images.
+"""Read-only metadata inspection for general files, images, and videos.
 
-Version: 2.2.0
+Version: 2.3.0
 Updated: 2026-09-21
 Author: hiro1960
 """
@@ -28,6 +28,10 @@ RASTER_EXTENSIONS = {
     ".bmp", ".gif", ".jfif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp",
 }
 IMAGE_EXTENSIONS = RASTER_EXTENSIONS | {".svg"}
+VIDEO_EXTENSIONS = {
+    ".3gp", ".avi", ".flv", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4",
+    ".mpeg", ".mpg", ".mts", ".ogv", ".ts", ".webm", ".wmv",
+}
 TEXT_EXTENSIONS = {
     ".bat", ".c", ".cc", ".cfg", ".conf", ".cpp", ".cs", ".css", ".csv",
     ".h", ".hpp", ".htm", ".html", ".ini", ".java", ".js", ".json", ".jsx",
@@ -56,10 +60,17 @@ class FileDetail:
     line_count: int | None = None
     sha256: str = ""
     image_format: str = ""
+    video_format: str = ""
     width: int | None = None
     height: int | None = None
     aspect_ratio: str = ""
     color_mode: str = ""
+    duration_seconds: float | None = None
+    frame_rate: str = ""
+    video_codec: str = ""
+    audio_codec: str = ""
+    bit_rate: str = ""
+    audio_channels: str = ""
     exif_datetime: str = ""
     camera: str = ""
     gps: str = ""
@@ -74,6 +85,23 @@ class FileDetail:
     @property
     def is_image(self) -> bool:
         return self.category == "image"
+
+    @property
+    def is_video(self) -> bool:
+        return self.category == "video"
+
+    @property
+    def media_format(self) -> str:
+        return self.image_format or self.video_format
+
+    @property
+    def duration(self) -> str:
+        if self.duration_seconds is None:
+            return ""
+        total = max(0, int(round(self.duration_seconds)))
+        hours, remainder = divmod(total, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
 
 
 def _files(node: ScanNode) -> Iterable[ScanNode]:
@@ -190,6 +218,84 @@ def _image_metadata(
         return values
 
 
+def _video_metadata(path: Path) -> dict[str, object]:
+    """Read common video metadata with the pure-Python Hachoir parser."""
+    try:
+        from hachoir.metadata import extractMetadata
+        from hachoir.parser import createParser
+    except ImportError as exc:  # pragma: no cover - dependency is installed in releases
+        raise ValueError("動画情報ライブラリがありません") from exc
+
+    parser = createParser(str(path))
+    if parser is None:
+        raise ValueError("動画形式を解析できません")
+    try:
+        metadata = extractMetadata(parser)
+        if metadata is None:
+            raise ValueError("動画情報を取得できません")
+
+        def value(group, key: str):  # type: ignore[no-untyped-def]
+            try:
+                return group.get(key)
+            except (AttributeError, KeyError, LookupError, TypeError, ValueError):
+                return None
+
+        width = value(metadata, "width")
+        height = value(metadata, "height")
+        duration_value = value(metadata, "duration")
+        duration_seconds = (
+            float(duration_value.total_seconds())
+            if hasattr(duration_value, "total_seconds") else None
+        )
+        frame_rate = value(metadata, "frame_rate")
+        bit_rate = value(metadata, "bit_rate")
+        video_codec = ""
+        audio_codec = ""
+        audio_channels = ""
+        try:
+            groups = list(metadata.iterGroups())
+        except AttributeError:
+            groups = []
+        for group in groups:
+            header = str(getattr(group, "header", "")).casefold()
+            compression = value(group, "compression") or value(group, "codec")
+            if "video" in header and compression and not video_codec:
+                video_codec = str(compression)
+            if "audio" in header:
+                if compression and not audio_codec:
+                    audio_codec = str(compression)
+                channels = value(group, "channel") or value(group, "channels")
+                if channels and not audio_channels:
+                    audio_channels = str(channels)
+        if not video_codec:
+            video_codec = str(value(metadata, "compression") or "")
+        calculated_bit_rate = (
+            path.stat().st_size * 8 / duration_seconds
+            if duration_seconds and duration_seconds > 0 else None
+        )
+        return {
+            "video_format": path.suffix.lstrip(".").upper(),
+            "width": int(width) if width else None,
+            "height": int(height) if height else None,
+            "aspect_ratio": _ratio(int(width), int(height)) if width and height else "",
+            "duration_seconds": duration_seconds,
+            "frame_rate": f"{float(frame_rate):.3g} fps" if frame_rate else "",
+            "video_codec": video_codec,
+            "audio_codec": audio_codec,
+            "bit_rate": (
+                f"{int(bit_rate) / 1_000_000:.2f} Mbps" if bit_rate
+                else f"{calculated_bit_rate / 1_000_000:.2f} Mbps" if calculated_bit_rate
+                else ""
+            ),
+            "audio_channels": audio_channels,
+        }
+    finally:
+        try:
+            parser.close()
+        except AttributeError:
+            pass
+
+
 def inspect_file(
     node: ScanNode,
     include_lines: bool,
@@ -201,11 +307,13 @@ def inspect_file(
     file_stat = path.stat()
     suffix = path.suffix.casefold()
     is_image = suffix in IMAGE_EXTENSIONS
+    is_video = suffix in VIDEO_EXTENSIONS
+    category = "image" if is_image else "video" if is_video else "general"
     detail = FileDetail(
         name=path.name,
         relative_path=node.relative_path.as_posix(),
         full_path=str(path),
-        category="image" if is_image else "general",
+        category=category,
         extension=suffix,
         file_size=file_stat.st_size,
         modified=datetime.fromtimestamp(file_stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
@@ -231,6 +339,13 @@ def inspect_file(
                 setattr(detail, key, value)
         except (ET.ParseError, UnidentifiedImageError, OSError, ValueError) as exc:
             errors.append(f"画像: {exc}")
+    elif is_video:
+        try:
+            values = _video_metadata(path)
+            for key, value in values.items():
+                setattr(detail, key, value)
+        except (OSError, ValueError) as exc:
+            errors.append(f"動画: {exc}")
     detail.error = "; ".join(errors)
     return detail
 
@@ -263,7 +378,11 @@ def inspect_scan_result(
                     name=node.name,
                     relative_path=node.relative_path.as_posix(),
                     full_path=str(node.path),
-                    category="image" if node.path.suffix.casefold() in IMAGE_EXTENSIONS else "general",
+                    category=(
+                        "image" if node.path.suffix.casefold() in IMAGE_EXTENSIONS
+                        else "video" if node.path.suffix.casefold() in VIDEO_EXTENSIONS
+                        else "general"
+                    ),
                     extension=node.path.suffix.casefold(),
                     file_size=node.size,
                     modified="",
@@ -284,13 +403,15 @@ def _excel_safe(value: object) -> object:
 
 def export_details_csv(details: list[FileDetail], destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    fields = list(FileDetail.__dataclass_fields__) + ["resolution"]
+    fields = list(FileDetail.__dataclass_fields__) + ["resolution", "media_format", "duration"]
     with destination.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for detail in details:
             row = asdict(detail)
             row["resolution"] = detail.resolution
+            row["media_format"] = detail.media_format
+            row["duration"] = detail.duration
             writer.writerow({key: _excel_safe(row[key]) for key in fields})
 
 
@@ -300,6 +421,8 @@ def export_details_json(details: list[FileDetail], source: Path, destination: Pa
     for detail in details:
         row = asdict(detail)
         row["resolution"] = detail.resolution
+        row["media_format"] = detail.media_format
+        row["duration"] = detail.duration
         rows.append(row)
     payload = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),

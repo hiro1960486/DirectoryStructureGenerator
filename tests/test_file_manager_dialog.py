@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QUrl
 
-from dsg_app.file_manager_dialog import first_dropped_directory
+from dsg_app.file_manager_dialog import FileManagerDialog, first_dropped_directory
 
 
 class DroppedDirectoryTests(unittest.TestCase):
@@ -32,6 +32,12 @@ class DroppedDirectoryTests(unittest.TestCase):
             result = first_dropped_directory([QUrl.fromLocalFile(str(file_path))])
 
             self.assertIsNone(result)
+
+
+class MediaTimeTests(unittest.TestCase):
+    def test_formats_minutes_and_hours(self) -> None:
+        self.assertEqual(FileManagerDialog.format_media_time(65_000), "01:05")
+        self.assertEqual(FileManagerDialog.format_media_time(3_661_000), "01:01:01")
 
 
 if __name__ == "__main__":
