@@ -1,9 +1,9 @@
-# Directory Structure Generator Ver.2.0.3
+# Directory Structure Generator Ver.2.1.0
 
 フォルダー構成を走査し、必要な項目だけを **TXT / HTML / CSV / JSON** に出力するWindows向けGUIアプリです。
 
-- Version: 2.0.3
-- Updated: 2026-09-20
+- Version: 2.1.0
+- Updated: 2026-09-21
 - Author: hiro1960
 - UI: PySide6
 - 対応OS: Windows 10 / 11（64ビット推奨）
@@ -11,6 +11,12 @@
 
 ## 今回の主な改善
 
+- 「画像・メディア解析」を独立したポップアップ画面として追加
+- PNG / JPEG / GIF / BMP / WebP / TIFFの形式、解像度、縦横比を一覧表示
+- 画像専用レポートをCSV / JSONで保存
+- EXIF取得は任意。GPS位置情報はレポートへ出力しない安全設計
+- 画像解析をバックグラウンド化し、通常のツリー走査速度を維持
+- 壊れた画像や読み取れない画像は、処理を止めずエラー欄へ記録
 - Windows 11になじむダーク／ライト対応UI
 - フォルダー入力欄と画面全体へのドラッグ＆ドロップ
 - フィルター部分だけをスクロールし、出力形式と実行ボタンを常時表示
@@ -63,6 +69,15 @@ target               Rust・Javaなどの生成物
 5. まず「プレビュー走査」を押します。
 6. 内容を確認して「構成ファイルを生成」を押します。
 
+## 画像・メディア解析
+
+1. 対象フォルダーを選びます。
+2. 左側の「画像・メディア解析…」を押します。
+3. ポップアップ画面で「画像を解析」を押します。
+4. 必要に応じて「CSVを保存」または「JSONを保存」を押します。
+
+「安全なEXIF情報も取得する」は初期状態ではオフです。オンにしても、GPS位置情報や自由記述コメントはレポートへ出力しません。元の画像ファイルは変更・削除されません。
+
 `START_APP.bat`はCMD画面を勝手に閉じません。起動に失敗した場合は、同じフォルダーの`startup_error.log`に原因を保存して画面にも表示します。
 
 > ZIPを開いた画面からBATを直接実行しないでください。必ず「すべて展開」してから使用します。
@@ -95,6 +110,8 @@ MyProject_tree.txt
 MyProject_index.html
 MyProject_file_list.csv
 MyProject_tree_data.json
+MyProject_image_report.csv
+MyProject_image_report.json
 ```
 
 HTMLには「すべて開く」「すべて閉じる」「名前を検索」があり、単体で閲覧できます。
@@ -114,6 +131,8 @@ HTMLには「すべて開く」「すべて閉じる」「名前を検索」が�
 ```text
 app.py                 起動ファイル
 dsg_app/               アプリ本体
+dsg_app/media_analyzer.py  画像情報の解析・CSV/JSON出力
+dsg_app/media_dialog.py    画像解析ポップアップ画面
 tests/                 自動テスト
 setup_dev.bat           初回セットアップ
 START_APP.bat            推奨起動（自動準備・エラー記録）

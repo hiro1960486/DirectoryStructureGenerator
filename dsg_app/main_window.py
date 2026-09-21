@@ -1,7 +1,7 @@
 """Modern PySide6 user interface.
 
-Version: 2.0.3
-Updated: 2026-09-20
+Version: 2.1.0
+Updated: 2026-09-21
 Author: hiro1960
 """
 
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from .config_manager import add_history, load_config, save_config
 from .exporters import export_selected, format_size, tree_lines
+from .media_dialog import MediaAnalysisDialog
 from .models import FilterSettings, PRESETS, ScanResult
 from .scanner import DirectoryScanner, ScanCancelled
 from .version import APP_NAME, APP_VERSION, AUTHOR, UPDATED
@@ -266,6 +267,11 @@ class MainWindow(QMainWindow):
         actions.addWidget(self.generate_button)
         actions.addWidget(self.cancel_button)
         settings_layout.addLayout(actions)
+
+        self.media_button = QPushButton("画像・メディア解析…")
+        self.media_button.setToolTip("画像の解像度・縦横比・形式などを別画面で調べます")
+        self.media_button.clicked.connect(self.open_media_analysis)
+        settings_layout.addWidget(self.media_button)
 
         preview_panel = QWidget()
         preview_layout = QVBoxLayout(preview_panel)
@@ -564,6 +570,7 @@ class MainWindow(QMainWindow):
     def _set_running(self, running: bool) -> None:
         self.preview_button.setEnabled(not running)
         self.generate_button.setEnabled(not running)
+        self.media_button.setEnabled(not running)
         self.cancel_button.setEnabled(running)
         self.progress_bar.setRange(0, 0 if running else 1)
         if not running:
@@ -652,6 +659,18 @@ class MainWindow(QMainWindow):
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
 
+    def open_media_analysis(self) -> None:
+        source = Path(self.source_combo.currentText().strip())
+        if not source.is_dir():
+            QMessageBox.warning(self, "確認", "画像解析の対象フォルダーを正しく選択してください。")
+            return
+        output_text = self.output_combo.currentText().strip()
+        output = Path(output_text) if output_text else source.parent / "DirectoryTree_Output"
+        if source.resolve() == output.expanduser().resolve():
+            output = source.parent / "DirectoryTree_Output"
+        dialog = MediaAnalysisDialog(source, output, self.current_filters(), self)
+        dialog.exec()
+
     def toggle_theme(self) -> None:
         self.apply_theme("light" if self.config.get("theme") == "dark" else "dark")
 
@@ -664,7 +683,8 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, "このアプリについて",
             f"{APP_NAME}\nVer.{APP_VERSION}\n\n更新日: {UPDATED}\n作者: {AUTHOR}\n\n"
-            "フォルダー構成をフィルターして TXT / HTML / CSV / JSON に出力します。",
+            "フォルダー構成をフィルターして TXT / HTML / CSV / JSON に出力します。\n"
+            "画像・メディア解析では、画像の解像度や縦横比を確認できます。",
         )
 
     def _save_ui_config(self) -> None:

@@ -4,7 +4,7 @@ cd /d "%~dp0"
 title Directory Structure Generator - EXE Build
 
 set "APP_NAME=DirectoryStructureGeneratorGUI"
-set "APP_VERSION=2.0.3"
+set "APP_VERSION=2.1.0"
 set "APP_PYTHON=%~dp0.venv\Scripts\python.exe"
 set "BUILD_LOG=%~dp0build_log.txt"
 set "DIST_DIR=%~dp0dist\%APP_NAME%"
@@ -49,9 +49,9 @@ if not exist "%APP_PYTHON%" (
 )
 
 echo [3/7] Checking build packages...
-"%APP_PYTHON%" -c "import PySide6, PyInstaller" >>"%BUILD_LOG%" 2>&1
+"%APP_PYTHON%" -c "import PySide6, PIL, PyInstaller" >>"%BUILD_LOG%" 2>&1
 if errorlevel 1 (
-    echo Installing PySide6 and PyInstaller. This may take several minutes...
+    echo Installing PySide6, Pillow and PyInstaller. This may take several minutes...
     "%APP_PYTHON%" -m pip install --upgrade pip >>"%BUILD_LOG%" 2>&1
     if errorlevel 1 goto setup_failed
     "%APP_PYTHON%" -m pip install -r "%~dp0requirements-build.txt" >>"%BUILD_LOG%" 2>&1

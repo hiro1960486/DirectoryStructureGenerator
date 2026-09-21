@@ -1,13 +1,13 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
-title Directory Structure Generator Ver.2.0.3
+title Directory Structure Generator Ver.2.1.0
 
 set "APP_PYTHON=%~dp0.venv\Scripts\python.exe"
 set "STARTUP_LOG=%~dp0startup_error.log"
 
 echo ============================================================
-echo Directory Structure Generator Ver.2.0.3
+echo Directory Structure Generator Ver.2.1.0
 echo Safe launcher and automatic setup
 echo ============================================================
 echo.
@@ -39,10 +39,10 @@ if not exist "%APP_PYTHON%" (
     if errorlevel 1 goto setup_failed
 )
 
-echo [3/4] Checking PySide6...
-"%APP_PYTHON%" -c "import PySide6; print(PySide6.__version__)" >>"%STARTUP_LOG%" 2>&1
+echo [3/4] Checking PySide6 and Pillow...
+"%APP_PYTHON%" -c "import PySide6, PIL; print(PySide6.__version__, PIL.__version__)" >>"%STARTUP_LOG%" 2>&1
 if errorlevel 1 (
-    echo Installing PySide6. This may take several minutes...
+    echo Installing PySide6 and Pillow. This may take several minutes...
     "%APP_PYTHON%" -m pip install --upgrade pip >>"%STARTUP_LOG%" 2>&1
     if errorlevel 1 goto setup_failed
     "%APP_PYTHON%" -m pip install -r "%~dp0requirements.txt" >>"%STARTUP_LOG%" 2>&1
