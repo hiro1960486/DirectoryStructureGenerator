@@ -6,7 +6,9 @@ from pathlib import Path
 
 from PIL import Image
 
-from dsg_app.file_inspector import export_details_csv, export_details_json, inspect_scan_result
+from dsg_app.file_inspector import (
+    FileDetail, export_details_csv, export_details_json, inspect_scan_result,
+)
 from dsg_app.models import FilterSettings
 from dsg_app.scanner import DirectoryScanner
 
@@ -54,6 +56,19 @@ class FileInspectorTests(unittest.TestCase):
         payload = json.loads(json_path.read_text(encoding="utf-8"))
         self.assertEqual(rows[0]["name"], "notes.txt")
         self.assertEqual(payload["file_count"], 1)
+
+    def test_video_display_fields(self):
+        detail = FileDetail(
+            name="sample.mp4", relative_path="media/sample.mp4", full_path="sample.mp4",
+            category="video", extension=".mp4", file_size=100, modified="", created="",
+            permissions="-rw-r--r--", readonly=False, video_format="MP4", width=1920,
+            height=1080, duration_seconds=65.2,
+        )
+
+        self.assertTrue(detail.is_video)
+        self.assertEqual(detail.media_format, "MP4")
+        self.assertEqual(detail.resolution, "1920 × 1080")
+        self.assertEqual(detail.duration, "01:05")
 
 
 if __name__ == "__main__":

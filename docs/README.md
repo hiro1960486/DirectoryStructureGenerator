@@ -1,6 +1,8 @@
 # 操作マニュアル
 
-- [Directory Structure Generator Ver.2.2.0 操作マニュアル（PDF）](DirectoryStructureGenerator_Ver2.2.0_操作マニュアル.pdf)
+- [Directory Structure Generator Ver.2.3.0 操作マニュアル（PDF）](DirectoryStructureGenerator_Ver2.3.0_操作マニュアル.pdf)
+
+Ver.2.3.0では、複数選択、画像・動画プレビュー、コピー側の個別リネーム、コピー先のドラッグ＆ドロップ、既定設定、GitHubでの共同改良手順を追加しています。
 
 PDFはGitHub上でそのまま表示でき、右上のダウンロードボタンから保存できます。
 

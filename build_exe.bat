@@ -4,7 +4,7 @@ cd /d "%~dp0"
 title Directory Structure Generator - EXE Build
 
 set "APP_NAME=DirectoryStructureGeneratorGUI"
-set "APP_VERSION=2.2.0"
+set "APP_VERSION=2.3.0"
 set "APP_PYTHON=%~dp0.venv\Scripts\python.exe"
 set "BUILD_LOG=%~dp0build_log.txt"
 set "DIST_DIR=%~dp0dist\%APP_NAME%"
@@ -49,7 +49,7 @@ if not exist "%APP_PYTHON%" (
 )
 
 echo [3/7] Checking build packages...
-"%APP_PYTHON%" -c "import PySide6, PIL, PyInstaller" >>"%BUILD_LOG%" 2>&1
+"%APP_PYTHON%" -c "import PySide6, PIL, PyInstaller, hachoir" >>"%BUILD_LOG%" 2>&1
 if errorlevel 1 (
     echo Installing PySide6, Pillow and PyInstaller. This may take several minutes...
     "%APP_PYTHON%" -m pip install --upgrade pip >>"%BUILD_LOG%" 2>&1
@@ -66,7 +66,6 @@ echo [5/7] Preparing build output...
 if "%CLEAN_BUILD%"=="1" (
     echo Clean build mode: removing the PyInstaller cache...
     if exist "%~dp0build" rmdir /s /q "%~dp0build"
-    if exist "%~dp0%APP_NAME%.spec" del /q "%~dp0%APP_NAME%.spec"
 ) else (
     echo Fast build mode: reusing the PyInstaller cache.
 )
@@ -79,6 +78,7 @@ echo This step may take several minutes. Please wait...
   --noconfirm ^
   --windowed ^
   --onedir ^
+  --collect-submodules hachoir ^
   --name "%APP_NAME%" ^
   "%~dp0app.py" >>"%BUILD_LOG%" 2>&1
 if errorlevel 1 goto build_failed

@@ -1,6 +1,6 @@
 """Modern PySide6 user interface.
 
-Version: 2.2.0
+Version: 2.3.0
 Updated: 2026-09-21
 Author: hiro1960
 """
@@ -13,7 +13,7 @@ from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeySequence, QTextCursor
 from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
+    QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame,
     QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
     QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
     QSpinBox, QSplitter, QStatusBar, QTextBrowser, QTextEdit, QToolBar, QVBoxLayout, QWidget,
@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from .config_manager import add_history, load_config, save_config
 from .exporters import export_selected, format_size, tree_lines
-from .file_manager_dialog import FileManagerDialog
+from .file_manager_dialog import FileManagerDialog, OrganizerSettingsDialog
 from .models import FilterSettings, PRESETS, ScanResult
 from .scanner import DirectoryScanner, ScanCancelled
 from .version import APP_NAME, APP_VERSION, AUTHOR, UPDATED
@@ -43,6 +43,11 @@ QPushButton#danger { background:#7f1d1d; border-color:#b91c1c; }
 QToolBar { background:#17243a; border-bottom:1px solid #263a59; spacing:8px; padding:4px; }
 QStatusBar { background:#17243a; } QProgressBar { border:1px solid #344966; border-radius:6px; text-align:center; background:#0d1421; }
 QProgressBar::chunk { background:#2563eb; border-radius:5px; } QSplitter::handle { background:#263a59; }
+QTableWidget { background:#0d1421; alternate-background-color:#121d2d; border:1px solid #2b3c56; border-radius:8px; selection-background-color:#1d4ed8; }
+QHeaderView::section { background:#17243a; color:#dbeafe; border:0; border-right:1px solid #2b3c56; padding:7px; font-weight:600; }
+QTabWidget::pane { border:1px solid #2b3c56; border-radius:8px; top:-1px; } QTabBar::tab { background:#17243a; padding:9px 16px; margin-right:3px; border-radius:7px; } QTabBar::tab:selected { background:#2563eb; color:white; }
+QFrame#previewCard { background:#17243a; border:1px solid #2b3c56; border-radius:12px; }
+QSlider::groove:horizontal { height:6px; background:#344966; border-radius:3px; } QSlider::handle:horizontal { width:16px; margin:-5px 0; background:#60a5fa; border-radius:8px; }
 """
 
 LIGHT_STYLE = """
@@ -60,6 +65,11 @@ QPushButton#danger { background:#fee2e2; border-color:#fca5a5; color:#991b1b; }
 QToolBar { background:white; border-bottom:1px solid #dbe4f0; spacing:8px; padding:4px; }
 QStatusBar { background:white; } QProgressBar { border:1px solid #c9d4e3; border-radius:6px; text-align:center; background:white; }
 QProgressBar::chunk { background:#2563eb; border-radius:5px; } QSplitter::handle { background:#d5deea; }
+QTableWidget { background:white; alternate-background-color:#f6f9fd; border:1px solid #d5deea; border-radius:8px; selection-background-color:#bfdbfe; }
+QHeaderView::section { background:#edf2f8; color:#172033; border:0; border-right:1px solid #d5deea; padding:7px; font-weight:600; }
+QTabWidget::pane { border:1px solid #d5deea; border-radius:8px; top:-1px; } QTabBar::tab { background:#e8eef6; padding:9px 16px; margin-right:3px; border-radius:7px; } QTabBar::tab:selected { background:#2563eb; color:white; }
+QFrame#previewCard { background:white; border:1px solid #d5deea; border-radius:12px; }
+QSlider::groove:horizontal { height:6px; background:#cbd5e1; border-radius:3px; } QSlider::handle:horizontal { width:16px; margin:-5px 0; background:#2563eb; border-radius:8px; }
 """
 
 
@@ -146,6 +156,10 @@ class MainWindow(QMainWindow):
         about = QAction("このアプリについて", self)
         about.triggered.connect(self.show_about)
         toolbar.addAction(about)
+        toolbar.addSeparator()
+        organizer_settings = QAction("⚙ 整理コピー設定", self)
+        organizer_settings.triggered.connect(self.show_organizer_settings)
+        toolbar.addAction(organizer_settings)
 
         root = QWidget()
         outer = QVBoxLayout(root)
@@ -670,11 +684,28 @@ class MainWindow(QMainWindow):
             output = source.parent / "DirectoryTree_Output"
         dialog = FileManagerDialog(
             source, output, self.current_filters(),
-            list(self.config.get("organizer_destinations", [])), self,
+            list(self.config.get("organizer_destinations", [])),
+            dict(self.config.get("organizer", {})), self,
         )
         dialog.exec()
         self.config["organizer_destinations"] = dialog.destination_history
+        self.config["organizer"] = dialog.organizer_settings
         self._save_ui_config()
+
+    def show_organizer_settings(self) -> None:
+        dialog = OrganizerSettingsDialog(
+            dict(self.config.get("organizer", {})),
+            list(self.config.get("organizer_destinations", [])), self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.config["organizer"] = dialog.values()
+        try:
+            save_config(self.config)
+        except OSError as exc:
+            QMessageBox.critical(self, "設定保存エラー", str(exc))
+            return
+        self.statusBar().showMessage("整理コピーの既定設定を保存しました", 4000)
 
     def toggle_theme(self) -> None:
         self.apply_theme("light" if self.config.get("theme") == "dark" else "dark")

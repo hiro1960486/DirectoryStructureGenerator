@@ -1,6 +1,6 @@
 """Popup UI for read-only inspection and non-destructive organization copies.
 
-Version: 2.2.0
+Version: 2.3.0
 Updated: 2026-09-21
 Author: hiro1960
 """
@@ -12,14 +12,18 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QThread, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import (
     QCloseEvent, QDesktopServices, QDragEnterEvent, QDragMoveEvent, QDropEvent,
-    QPixmap,
+    QImage, QPixmap,
 )
+from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer
+from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar,
-    QPushButton, QSplitter, QTabWidget, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+    QFrame, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
+    QMessageBox, QProgressBar, QPushButton, QSlider, QSplitter, QStackedWidget,
+    QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
+
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .exporters import format_size
 from .file_inspector import (
@@ -27,7 +31,10 @@ from .file_inspector import (
     inspect_scan_result,
 )
 from .models import FilterSettings
-from .organizer import CopyCancelled, CopyPlan, build_copy_plans, execute_copy_plans
+from .organizer import (
+    CopyCancelled, CopyPlan, build_copy_plans, execute_copy_plans, rendered_name,
+    sanitize_filename,
+)
 from .scanner import DirectoryScanner, ScanCancelled
 
 
@@ -183,18 +190,34 @@ class CopyWorker(QObject):
 
 class FileManagerDialog(QDialog):
     HEADERS = [
-        "ファイル", "区分", "拡張子", "サイズ", "更新日時", "作成日時", "行数",
-        "アクセス権", "読取専用", "画像形式", "解像度", "縦横比", "カラー",
-        "撮影日時", "カメラ", "GPS", "SHA256", "エラー",
+        "選択", "ファイル名", "保存場所", "区分", "拡張子", "サイズ", "更新日時",
+        "作成日時", "行数", "アクセス権", "読取専用", "形式", "解像度",
+        "再生時間", "FPS", "映像", "音声", "ビットレート", "チャンネル",
+        "縦横比", "カラー", "撮影日時", "カメラ", "GPS", "SHA256", "エラー",
+    ]
+    CHECK_COLUMN = 0
+    NAME_COLUMN = 1
+    PATH_COLUMN = 2
+    CATEGORY_COLUMN = 3
+    NAMING_PRESETS = [
+        ("元の名前のまま（おすすめ）", "{name}"),
+        ("1件ずつ新しい名前を設定", "__individual__"),
+        ("元の名前＋3桁の連番", "{stem}_{index:03d}{ext}"),
+        ("今日の日付＋元の名前", "{date}_{stem}{ext}"),
+        ("作成日＋元の名前", "{created}_{stem}{ext}"),
+        ("画像・動画・一般別＋連番", "{type}_{index:03d}{ext}"),
+        ("高度な命名ルール", "__custom__"),
     ]
 
     def __init__(
         self, source: Path, output: Path, settings: FilterSettings,
-        destination_history: list[str] | None = None, parent=None,
+        destination_history: list[str] | None = None,
+        organizer_settings: dict[str, object] | None = None, parent=None,
     ) -> None:
         super().__init__(parent)
         self.source, self.output, self.settings = source, output, settings
         self.destination_history = list(destination_history or [])
+        self.organizer_settings = dict(organizer_settings or {})
         self.details: list[FileDetail] = []
         self.detail_by_path: dict[str, FileDetail] = {}
         self.copy_plans: list[CopyPlan] = []
@@ -202,23 +225,31 @@ class FileManagerDialog(QDialog):
         self.thread: QThread | None = None
         self.worker: InspectionWorker | CopyWorker | None = None
         self._mode = ""
+        self._table_populating = False
+        self.media_duration = 0
         self.setWindowTitle("ファイル詳細・整理コピー")
-        self.resize(1280, 780)
-        self.setMinimumSize(960, 620)
+        self.resize(1480, 860)
+        self.setMinimumSize(1080, 680)
         self.setModal(True)
         self._build_ui()
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 14, 16, 12)
+        outer.setSpacing(10)
+        hero = QFrame(objectName="hero")
+        hero_layout = QVBoxLayout(hero)
         title = QLabel("ファイル詳細・整理コピー")
-        title.setStyleSheet("font-size:18pt;font-weight:700")
-        outer.addWidget(title)
+        title.setStyleSheet("font-size:18pt;font-weight:700;background:transparent")
+        hero_layout.addWidget(title)
         message = QLabel(
-            "ファイルを読み取り専用で調査し、選択したものを指定フォルダーへコピーします。"
-            "元ファイルの削除・移動・名前変更は行いません。"
+            "ファイルを確認・選択し、コピー側の名前を整えて保存します。"
+            "元ファイルの削除・移動・直接の名前変更は行いません。"
         )
         message.setWordWrap(True)
-        outer.addWidget(message)
+        message.setStyleSheet("background:transparent")
+        hero_layout.addWidget(message)
+        outer.addWidget(hero)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self._detail_tab(), "1. ファイル詳細")
@@ -231,12 +262,14 @@ class FileManagerDialog(QDialog):
         self.progress = QProgressBar()
         self.progress.setRange(0, 1)
         self.progress.setValue(0)
+        self.progress.setMinimumWidth(260)
+        self.progress.setMaximumWidth(440)
         self.cancel_button = QPushButton("中止")
         self.cancel_button.setObjectName("danger")
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self.cancel_operation)
         self.close_button = QPushButton("閉じる")
-        self.close_button.clicked.connect(self.accept)
+        self.close_button.clicked.connect(self.close)
         status.addWidget(self.status_label, 2)
         status.addWidget(self.progress, 1)
         status.addWidget(self.cancel_button)
@@ -267,7 +300,7 @@ class FileManagerDialog(QDialog):
 
         filters = QHBoxLayout()
         self.type_filter = QComboBox()
-        self.type_filter.addItems(["すべて", "一般ファイル", "画像ファイル"])
+        self.type_filter.addItems(["すべて", "一般ファイル", "画像ファイル", "動画ファイル"])
         self.type_filter.currentTextChanged.connect(self.apply_filter)
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("ファイル名・パスを検索")
@@ -281,6 +314,15 @@ class FileManagerDialog(QDialog):
         self.json_button.clicked.connect(lambda: self.save_report("json"))
         filters.addWidget(self.type_filter)
         filters.addWidget(self.search_edit, 1)
+        self.select_all_button = QPushButton("表示中を選択")
+        self.clear_selection_button = QPushButton("選択解除")
+        self.invert_selection_button = QPushButton("選択反転")
+        self.select_all_button.clicked.connect(lambda: self.set_visible_checks("all"))
+        self.clear_selection_button.clicked.connect(lambda: self.set_visible_checks("none"))
+        self.invert_selection_button.clicked.connect(lambda: self.set_visible_checks("invert"))
+        filters.addWidget(self.select_all_button)
+        filters.addWidget(self.clear_selection_button)
+        filters.addWidget(self.invert_selection_button)
         filters.addWidget(self.csv_button)
         filters.addWidget(self.json_button)
         layout.addLayout(filters)
@@ -291,32 +333,82 @@ class FileManagerDialog(QDialog):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
         self.table.setSortingEnabled(True)
         self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.verticalHeader().setDefaultSectionSize(28)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setMinimumSectionSize(42)
+        header.setStretchLastSection(False)
+        self.table.setColumnWidth(self.CHECK_COLUMN, 54)
+        self.table.setColumnWidth(self.NAME_COLUMN, 280)
+        self.table.setColumnWidth(self.PATH_COLUMN, 360)
+        for column in range(3, len(self.HEADERS)):
+            self.table.setColumnWidth(column, 120)
         self.table.itemSelectionChanged.connect(self.update_preview)
+        self.table.itemChanged.connect(self.on_table_item_changed)
+        self.table.currentCellChanged.connect(lambda *_args: self.update_preview())
         splitter.addWidget(self.table)
 
-        preview = QWidget()
+        preview = QFrame(objectName="previewCard")
+        preview.setMinimumWidth(330)
         preview_layout = QVBoxLayout(preview)
-        self.thumbnail = QLabel("画像を選択すると\nプレビューします")
+        preview_title = QLabel("プレビュー")
+        preview_title.setStyleSheet("font-size:12pt;font-weight:700")
+        preview_layout.addWidget(preview_title)
+        self.preview_stack = QStackedWidget()
+        self.preview_placeholder = QLabel("画像または動画を選択すると\nここにプレビューします")
+        self.preview_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_placeholder.setMinimumHeight(260)
+        self.thumbnail = QLabel()
         self.thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.thumbnail.setMinimumSize(240, 200)
-        self.thumbnail.setStyleSheet("border:1px solid #6b7280;border-radius:8px")
+        self.thumbnail.setMinimumHeight(260)
+        self.video_widget = QVideoWidget()
+        self.video_widget.setMinimumHeight(260)
+        self.preview_stack.addWidget(self.preview_placeholder)
+        self.preview_stack.addWidget(self.thumbnail)
+        self.preview_stack.addWidget(self.video_widget)
+        preview_layout.addWidget(self.preview_stack, 1)
+
+        self.audio_output = QAudioOutput(self)
+        self.audio_output.setVolume(0.5)
+        self.media_player = QMediaPlayer(self)
+        self.media_player.setAudioOutput(self.audio_output)
+        self.media_player.setVideoOutput(self.video_widget)
+        self.media_player.positionChanged.connect(self.on_media_position)
+        self.media_player.durationChanged.connect(self.on_media_duration)
+        self.media_player.playbackStateChanged.connect(self.on_playback_state)
+        self.media_player.errorOccurred.connect(self.on_media_error)
+        self.media_player.metaDataChanged.connect(self.on_media_metadata_changed)
+        media_controls = QHBoxLayout()
+        self.play_button = QPushButton("▶ 再生")
+        self.play_button.clicked.connect(self.toggle_video)
+        self.seek_slider = QSlider(Qt.Orientation.Horizontal)
+        self.seek_slider.setRange(0, 0)
+        self.seek_slider.sliderMoved.connect(self.media_player.setPosition)
+        self.media_time = QLabel("00:00 / 00:00")
+        media_controls.addWidget(self.play_button)
+        media_controls.addWidget(self.seek_slider, 1)
+        media_controls.addWidget(self.media_time)
+        self.media_controls_widget = QWidget()
+        self.media_controls_widget.setLayout(media_controls)
+        self.media_controls_widget.setVisible(False)
+        preview_layout.addWidget(self.media_controls_widget)
         self.selected_info = QLabel("未選択")
         self.selected_info.setWordWrap(True)
         self.open_file_button = QPushButton("元ファイルを開く")
         self.open_folder_button = QPushButton("保存場所を開く")
         self.open_file_button.clicked.connect(self.open_selected_file)
         self.open_folder_button.clicked.connect(self.open_selected_folder)
-        preview_layout.addWidget(self.thumbnail)
         preview_layout.addWidget(self.selected_info)
-        preview_layout.addStretch()
         preview_layout.addWidget(self.open_file_button)
         preview_layout.addWidget(self.open_folder_button)
         splitter.addWidget(preview)
-        splitter.setSizes([960, 260])
+        splitter.setSizes([1080, 350])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
         layout.addWidget(splitter, 1)
         return tab
 
@@ -332,14 +424,20 @@ class FileManagerDialog(QDialog):
         self.destination_combo = FolderDropComboBox()
         self.destination_combo.setEditable(True)
         self.destination_combo.addItems(self.destination_history)
-        if not self.destination_history:
+        default_destination = str(self.organizer_settings.get("default_destination", "")).strip()
+        if default_destination:
+            self.destination_combo.setCurrentText(default_destination)
+        elif not self.destination_history:
             self.destination_combo.setCurrentText(str(self.output / "Organized_Files"))
         self.destination_combo.currentTextChanged.connect(self.invalidate_copy_plan)
         self.destination_combo.folderDropped.connect(self.set_dropped_destination)
         browse = QPushButton("参照…")
         browse.clicked.connect(self.choose_destination)
+        create_folder = QPushButton("新しい保存フォルダー…")
+        create_folder.clicked.connect(self.create_destination_folder)
         destination_row.addWidget(self.destination_combo, 1)
         destination_row.addWidget(browse)
+        destination_row.addWidget(create_folder)
         form.addRow("コピー先", destination_row)
         drop_help = QLabel(
             "エクスプローラーからコピー先フォルダーを、この画面またはコピー先欄へ"
@@ -349,27 +447,35 @@ class FileManagerDialog(QDialog):
         drop_help.setStyleSheet("color:#2563eb")
         form.addRow("", drop_help)
 
-        self.name_template = QComboBox()
-        self.name_template.setEditable(True)
-        self.name_template.addItems([
-            "{name}", "{stem}_{index:03d}{ext}", "{date}_{stem}{ext}",
-            "{created}_{stem}{ext}", "{type}_{index:03d}{ext}",
-        ])
-        self.name_template.currentTextChanged.connect(self.invalidate_copy_plan)
-        form.addRow("新しいファイル名／命名ルール", self.name_template)
+        self.naming_combo = QComboBox()
+        for label, template in self.NAMING_PRESETS:
+            self.naming_combo.addItem(label, template)
+        saved_template = str(self.organizer_settings.get("naming_template", "{name}"))
+        saved_index = self.naming_combo.findData(saved_template)
+        self.naming_combo.setCurrentIndex(max(saved_index, 0))
+        self.naming_combo.currentIndexChanged.connect(self.on_naming_mode_changed)
+        form.addRow("新しい名前の付け方", self.naming_combo)
+        self.custom_template = QLineEdit()
+        self.custom_template.setPlaceholderText("例：{date}_{stem}_{index:03d}{ext}")
+        self.custom_template.setText(str(self.organizer_settings.get("custom_template", "{name}")))
+        self.custom_template.textChanged.connect(self.invalidate_copy_plan)
+        self.custom_template.setVisible(self.naming_combo.currentData() == "__custom__")
+        form.addRow("高度な命名ルール", self.custom_template)
         rule_help = QLabel(
-            "1件なら新しい名前を直接入力できます。複数件では "
-            "{name} {stem} {ext} {index:03d} {date} {created} {type} を使用できます。"
+            "まず選択肢から方法を選びます。下の「新しいファイル名」は1件ずつ変更できます。"
+            "変更されるのはコピー側だけです。"
         )
         rule_help.setWordWrap(True)
         form.addRow("", rule_help)
         self.keep_subfolders = QCheckBox("元のサブフォルダー構成を維持する")
-        self.keep_subfolders.setChecked(True)
+        self.keep_subfolders.setChecked(bool(self.organizer_settings.get("keep_subfolders", True)))
         self.keep_subfolders.toggled.connect(self.invalidate_copy_plan)
         form.addRow("", self.keep_subfolders)
         self.collision_combo = QComboBox()
         self.collision_combo.addItem("自動で連番を付ける（推奨）", "number")
         self.collision_combo.addItem("同名ファイルはスキップ", "skip")
+        collision = str(self.organizer_settings.get("collision", "number"))
+        self.collision_combo.setCurrentIndex(max(self.collision_combo.findData(collision), 0))
         self.collision_combo.currentIndexChanged.connect(self.invalidate_copy_plan)
         form.addRow("同名ファイルがある場合", self.collision_combo)
         layout.addLayout(form)
@@ -381,17 +487,32 @@ class FileManagerDialog(QDialog):
         self.copy_button.setObjectName("primary")
         self.copy_button.setEnabled(False)
         self.copy_button.clicked.connect(self.start_copy)
+        defaults_button = QPushButton("現在の設定を既定値に保存")
+        defaults_button.clicked.connect(self.save_organizer_defaults)
         buttons.addWidget(self.plan_button)
         buttons.addWidget(self.copy_button)
+        buttons.addWidget(defaults_button)
         buttons.addStretch()
         layout.addLayout(buttons)
 
-        self.plan_table = QTableWidget(0, 3)
-        self.plan_table.setHorizontalHeaderLabels(["元ファイル", "コピー先", "状態"])
-        self.plan_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.plan_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.plan_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.plan_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.plan_table = QTableWidget(0, 4)
+        self.plan_table.setHorizontalHeaderLabels(
+            ["元ファイル名（変更しません）", "新しいファイル名（編集可）", "コピー先", "状態"]
+        )
+        self.plan_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.SelectedClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+        )
+        self.plan_table.setAlternatingRowColors(True)
+        self.plan_table.setShowGrid(False)
+        plan_header = self.plan_table.horizontalHeader()
+        plan_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.plan_table.setColumnWidth(0, 310)
+        self.plan_table.setColumnWidth(1, 310)
+        self.plan_table.setColumnWidth(2, 520)
+        self.plan_table.setColumnWidth(3, 160)
+        self.plan_table.itemChanged.connect(self.on_plan_item_changed)
         layout.addWidget(self.plan_table, 1)
         warning = QLabel(
             "安全仕様：元ファイルは変更・削除しません。コピー先が対象フォルダー内の場合は実行できません。"
@@ -440,7 +561,8 @@ class FileManagerDialog(QDialog):
         self.progress.setRange(0, max(total, 1))
         self.progress.setValue(current)
         action = "コピー中" if self._mode == "copy" else "解析中"
-        self.status_label.setText(f"{action} {current:,} / {total:,}: {path}")
+        self.status_label.setText(f"{action} {current:,} / {total:,}: {Path(path).name}")
+        self.status_label.setToolTip(path)
 
     @Slot(object)
     def on_worker_finished(self, result: object) -> None:
@@ -450,8 +572,10 @@ class FileManagerDialog(QDialog):
             self.populate_table()
             errors = sum(bool(detail.error) for detail in self.details)
             images = sum(detail.is_image for detail in self.details)
+            videos = sum(detail.is_video for detail in self.details)
             self.status_label.setText(
-                f"解析完了: 全{len(self.details):,}件 ｜ 画像{images:,}件 ｜ エラー{errors:,}件"
+                f"解析完了: 全{len(self.details):,}件 ｜ 画像{images:,}件 ｜ "
+                f"動画{videos:,}件 ｜ エラー{errors:,}件"
             )
         else:
             self.copy_plans = list(result)  # type: ignore[arg-type]
@@ -498,22 +622,40 @@ class FileManagerDialog(QDialog):
             self.status_label.setText("中止を待っています…")
 
     def populate_table(self) -> None:
+        self._table_populating = True
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(self.details))
         for row, detail in enumerate(self.details):
+            check_item = QTableWidgetItem()
+            check_item.setCheckState(Qt.CheckState.Unchecked)
+            check_item.setData(Qt.ItemDataRole.UserRole, detail.full_path)
+            check_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsUserCheckable
+            )
+            self.table.setItem(row, self.CHECK_COLUMN, check_item)
+            location = Path(detail.relative_path).parent.as_posix()
+            if location == ".":
+                location = "（対象フォルダー直下）"
             values = [
-                detail.relative_path, "画像" if detail.is_image else "一般", detail.extension,
+                detail.name, location,
+                "画像" if detail.is_image else "動画" if detail.is_video else "一般",
+                detail.extension,
                 format_size(detail.file_size), detail.modified, detail.created,
                 "" if detail.line_count is None else f"{detail.line_count:,}",
-                detail.permissions, "はい" if detail.readonly else "いいえ", detail.image_format,
-                detail.resolution, detail.aspect_ratio, detail.color_mode, detail.exif_datetime,
-                detail.camera, detail.gps, detail.sha256, detail.error,
+                detail.permissions, "はい" if detail.readonly else "いいえ", detail.media_format,
+                detail.resolution, detail.duration, detail.frame_rate, detail.video_codec,
+                detail.audio_codec, detail.bit_rate, detail.audio_channels, detail.aspect_ratio,
+                detail.color_mode, detail.exif_datetime, detail.camera, detail.gps,
+                detail.sha256, detail.error,
             ]
-            for column, value in enumerate(values):
+            for column, value in enumerate(values, start=1):
                 item = QTableWidgetItem(str(value))
                 item.setData(Qt.ItemDataRole.UserRole, detail.full_path)
+                item.setToolTip(detail.relative_path if column in {1, 2} else str(value))
                 self.table.setItem(row, column, item)
         self.table.setSortingEnabled(True)
+        self._table_populating = False
         self.csv_button.setEnabled(bool(self.details))
         self.json_button.setEnabled(bool(self.details))
         self.apply_filter()
@@ -524,49 +666,208 @@ class FileManagerDialog(QDialog):
         search = self.search_edit.text().casefold()
         kind = self.type_filter.currentText()
         for row in range(self.table.rowCount()):
-            path_item = self.table.item(row, 0)
-            type_item = self.table.item(row, 1)
-            visible = bool(path_item and search in path_item.text().casefold())
+            name_item = self.table.item(row, self.NAME_COLUMN)
+            path_item = self.table.item(row, self.PATH_COLUMN)
+            type_item = self.table.item(row, self.CATEGORY_COLUMN)
+            searchable = " ".join(
+                item.text().casefold() for item in (name_item, path_item) if item
+            )
+            visible = search in searchable
             if kind == "一般ファイル":
                 visible = visible and bool(type_item and type_item.text() == "一般")
             elif kind == "画像ファイル":
                 visible = visible and bool(type_item and type_item.text() == "画像")
+            elif kind == "動画ファイル":
+                visible = visible and bool(type_item and type_item.text() == "動画")
             self.table.setRowHidden(row, not visible)
+
+    def set_visible_checks(self, mode: str) -> None:
+        self._table_populating = True
+        for row in range(self.table.rowCount()):
+            if self.table.isRowHidden(row):
+                continue
+            item = self.table.item(row, self.CHECK_COLUMN)
+            if not item:
+                continue
+            checked = item.checkState() == Qt.CheckState.Checked
+            new_checked = not checked if mode == "invert" else mode == "all"
+            item.setCheckState(Qt.CheckState.Checked if new_checked else Qt.CheckState.Unchecked)
+        self._table_populating = False
+        self.update_preview()
+
+    def on_table_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._table_populating or item.column() != self.CHECK_COLUMN:
+            return
+        self.update_preview()
 
     def selected_details(self) -> list[FileDetail]:
         selected: list[FileDetail] = []
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, self.CHECK_COLUMN)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                detail = self.detail_by_path.get(str(item.data(Qt.ItemDataRole.UserRole)))
+                if detail:
+                    selected.append(detail)
+        if selected:
+            return selected
         for index in self.table.selectionModel().selectedRows():
-            item = self.table.item(index.row(), 0)
+            item = self.table.item(index.row(), self.NAME_COLUMN)
             if item and (detail := self.detail_by_path.get(str(item.data(Qt.ItemDataRole.UserRole)))):
                 selected.append(detail)
         return selected
+
+    def focused_detail(self) -> FileDetail | None:
+        row = self.table.currentRow()
+        item = self.table.item(row, self.NAME_COLUMN) if row >= 0 else None
+        if item:
+            detail = self.detail_by_path.get(str(item.data(Qt.ItemDataRole.UserRole)))
+            if detail:
+                return detail
+        selected = self.selected_details()
+        return selected[0] if selected else None
 
     def update_preview(self) -> None:
         self.invalidate_copy_plan()
         selected = self.selected_details()
         self.selection_label.setText(f"選択中: {len(selected):,}件")
-        if not selected:
-            self.thumbnail.clear()
-            self.thumbnail.setText("画像を選択すると\nプレビューします")
+        detail = self.focused_detail()
+        if not detail:
+            self.media_player.stop()
+            self.preview_stack.setCurrentWidget(self.preview_placeholder)
+            self.media_controls_widget.setVisible(False)
             self.selected_info.setText("未選択")
             return
-        detail = selected[0]
+        media_lines = []
+        if detail.resolution:
+            media_lines.append(detail.resolution)
+        if detail.duration:
+            media_lines.append(f"再生時間 {detail.duration}")
+        if detail.frame_rate:
+            media_lines.append(detail.frame_rate)
+        if detail.video_codec:
+            media_lines.append(f"映像 {detail.video_codec}")
+        if detail.audio_codec:
+            media_lines.append(f"音声 {detail.audio_codec}")
         self.selected_info.setText(
-            f"{detail.relative_path}\n{format_size(detail.file_size)}"
-            + (f"\n{detail.resolution} / {detail.color_mode}" if detail.is_image else "")
+            f"{detail.name}\n{detail.relative_path}\n{format_size(detail.file_size)}"
+            + ("\n" + " / ".join(media_lines) if media_lines else "")
         )
-        pixmap = QPixmap(detail.full_path) if detail.is_image else QPixmap()
-        if not pixmap.isNull():
-            self.thumbnail.setPixmap(
-                pixmap.scaled(240, 200, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-            )
+        if detail.is_image:
+            self.media_player.stop()
+            self.media_controls_widget.setVisible(False)
+            pixmap = self.load_image_preview(Path(detail.full_path))
+            if pixmap and not pixmap.isNull():
+                self.thumbnail.setPixmap(
+                    pixmap.scaled(420, 280, Qt.AspectRatioMode.KeepAspectRatio,
+                                  Qt.TransformationMode.SmoothTransformation)
+                )
+                self.preview_stack.setCurrentWidget(self.thumbnail)
+            else:
+                self.preview_placeholder.setText("画像を表示できません")
+                self.preview_stack.setCurrentWidget(self.preview_placeholder)
+        elif detail.is_video:
+            source = QUrl.fromLocalFile(detail.full_path)
+            if self.media_player.source() != source:
+                self.media_player.stop()
+                self.media_player.setSource(source)
+            self.preview_stack.setCurrentWidget(self.video_widget)
+            self.media_controls_widget.setVisible(True)
         else:
-            self.thumbnail.setPixmap(QPixmap())
-            self.thumbnail.setText("プレビューなし")
+            self.media_player.stop()
+            self.media_controls_widget.setVisible(False)
+            self.preview_placeholder.setText("このファイルはプレビュー対象外です")
+            self.preview_stack.setCurrentWidget(self.preview_placeholder)
+
+    @staticmethod
+    def load_image_preview(path: Path) -> QPixmap | None:
+        if path.suffix.casefold() == ".svg":
+            pixmap = QPixmap(str(path))
+            return pixmap if not pixmap.isNull() else None
+        try:
+            with Image.open(path) as image:
+                image = ImageOps.exif_transpose(image).convert("RGBA")
+                image.thumbnail((1200, 900))
+                data = image.tobytes("raw", "RGBA")
+                qimage = QImage(
+                    data, image.width, image.height, image.width * 4,
+                    QImage.Format.Format_RGBA8888,
+                ).copy()
+            return QPixmap.fromImage(qimage)
+        except (OSError, ValueError, UnidentifiedImageError):
+            return None
+
+    @staticmethod
+    def format_media_time(milliseconds: int) -> str:
+        total_seconds = max(0, milliseconds // 1000)
+        minutes, seconds = divmod(total_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
+
+    def on_media_position(self, position: int) -> None:
+        if not self.seek_slider.isSliderDown():
+            self.seek_slider.setValue(position)
+        self.media_time.setText(
+            f"{self.format_media_time(position)} / {self.format_media_time(self.media_duration)}"
+        )
+
+    def on_media_duration(self, duration: int) -> None:
+        self.media_duration = duration
+        self.seek_slider.setRange(0, max(duration, 0))
+        self.on_media_position(self.media_player.position())
+
+    def on_playback_state(self, state: QMediaPlayer.PlaybackState) -> None:
+        self.play_button.setText(
+            "⏸ 一時停止" if state == QMediaPlayer.PlaybackState.PlayingState else "▶ 再生"
+        )
+
+    def on_media_error(self, _error, error_text: str) -> None:  # type: ignore[no-untyped-def]
+        if error_text:
+            self.selected_info.setText(self.selected_info.text() + f"\n再生できません: {error_text}")
+
+    def on_media_metadata_changed(self) -> None:
+        detail = self.focused_detail()
+        if not detail or not detail.is_video:
+            return
+        metadata = self.media_player.metaData()
+
+        def text(key_name: str) -> str:
+            key = getattr(QMediaMetaData.Key, key_name, None)
+            return metadata.stringValue(key) if key is not None else ""
+
+        frame_rate_key = getattr(QMediaMetaData.Key, "VideoFrameRate", None)
+        frame_rate = metadata.value(frame_rate_key) if frame_rate_key is not None else None
+        if frame_rate:
+            detail.frame_rate = f"{float(frame_rate):.3g} fps"
+        detail.video_codec = text("VideoCodec") or detail.video_codec
+        detail.audio_codec = text("AudioCodec") or detail.audio_codec
+        channels = text("AudioChannelCount")
+        detail.audio_channels = channels or detail.audio_channels
+        video_bitrate = text("VideoBitRate")
+        audio_bitrate = text("AudioBitRate")
+        if video_bitrate or audio_bitrate:
+            detail.bit_rate = " / ".join(part for part in (video_bitrate, audio_bitrate) if part)
+        row = self.table.currentRow()
+        if row >= 0:
+            updates = {
+                14: detail.frame_rate, 15: detail.video_codec, 16: detail.audio_codec,
+                17: detail.bit_rate, 18: detail.audio_channels,
+            }
+            self._table_populating = True
+            for column, value in updates.items():
+                item = self.table.item(row, column)
+                if item:
+                    item.setText(value)
+            self._table_populating = False
+
+    def toggle_video(self) -> None:
+        if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self.media_player.pause()
+        else:
+            self.media_player.play()
 
     def _selected_path(self) -> Path | None:
-        details = self.selected_details()
-        return Path(details[0].full_path) if details else None
+        detail = self.focused_detail()
+        return Path(detail.full_path) if detail else None
 
     def open_selected_file(self) -> None:
         if path := self._selected_path():
@@ -594,14 +895,106 @@ class FileManagerDialog(QDialog):
 
     def _tab_changed(self, index: int) -> None:
         if index == 1:
-            selected = self.selected_details()
-            self.selection_label.setText(f"選択中: {len(selected):,}件")
+            self.refresh_rename_table(preserve=True)
 
     def choose_destination(self) -> None:
         initial = self.destination_combo.currentText().strip() or str(self.output)
         selected = QFileDialog.getExistingDirectory(self, "整理コピー先を選択", initial)
         if selected:
             self.destination_combo.setCurrentText(selected)
+
+    def create_destination_folder(self) -> None:
+        current = Path(self.destination_combo.currentText().strip() or self.output).expanduser()
+        initial = current if current.is_dir() else current.parent
+        parent = QFileDialog.getExistingDirectory(self, "保存フォルダーを作る場所", str(initial))
+        if not parent:
+            return
+        name, accepted = QInputDialog.getText(self, "新しい保存フォルダー", "フォルダー名")
+        if not accepted or not name.strip():
+            return
+        safe_name = sanitize_filename(name.strip())
+        destination = (Path(parent) / safe_name).resolve()
+        source = self.source.resolve()
+        if destination == source or destination.is_relative_to(source):
+            QMessageBox.warning(self, "安全確認", "対象フォルダーの内側には保存フォルダーを作成できません。")
+            return
+        try:
+            destination.mkdir(parents=False, exist_ok=False)
+        except FileExistsError:
+            QMessageBox.information(self, "確認", "同じ名前のフォルダーがすでにあります。")
+            return
+        except OSError as exc:
+            QMessageBox.critical(self, "作成エラー", str(exc))
+            return
+        self.destination_combo.setCurrentText(str(destination))
+        self.status_label.setText(f"保存フォルダーを作成しました: {destination}")
+
+    def current_naming_template(self) -> str:
+        value = str(self.naming_combo.currentData())
+        if value == "__custom__":
+            return self.custom_template.text().strip() or "{name}"
+        if value == "__individual__":
+            return "{name}"
+        return value or "{name}"
+
+    def on_naming_mode_changed(self, *_args) -> None:  # type: ignore[no-untyped-def]
+        is_custom = self.naming_combo.currentData() == "__custom__"
+        self.custom_template.setVisible(is_custom)
+        if hasattr(self, "plan_table"):
+            self.refresh_rename_table(preserve=False)
+
+    def suggested_copy_name(self, detail: FileDetail, index: int) -> str:
+        return rendered_name(detail, self.current_naming_template(), index)
+
+    def refresh_rename_table(self, preserve: bool) -> None:
+        previous: dict[str, str] = {}
+        if preserve and hasattr(self, "plan_table"):
+            for row in range(self.plan_table.rowCount()):
+                source_item = self.plan_table.item(row, 0)
+                name_item = self.plan_table.item(row, 1)
+                if source_item and name_item:
+                    previous[str(source_item.data(Qt.ItemDataRole.UserRole))] = name_item.text()
+        details = self.selected_details()
+        self.selection_label.setText(
+            f"選択中: {len(details):,}件　｜　新しいファイル名は表の2列目をダブルクリックして変更できます。"
+        )
+        self.plan_table.blockSignals(True)
+        self.plan_table.setRowCount(len(details))
+        for row, detail in enumerate(details):
+            original = QTableWidgetItem(detail.name)
+            original.setData(Qt.ItemDataRole.UserRole, detail.full_path)
+            original.setToolTip(detail.relative_path)
+            original.setFlags(original.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            new_name = previous.get(detail.full_path) or self.suggested_copy_name(detail, row + 1)
+            renamed = QTableWidgetItem(new_name)
+            destination = QTableWidgetItem("事前確認後に表示")
+            status = QTableWidgetItem("未確認")
+            destination.setFlags(destination.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            status.setFlags(status.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.plan_table.setItem(row, 0, original)
+            self.plan_table.setItem(row, 1, renamed)
+            self.plan_table.setItem(row, 2, destination)
+            self.plan_table.setItem(row, 3, status)
+        self.plan_table.blockSignals(False)
+        self.invalidate_copy_plan()
+
+    def on_plan_item_changed(self, item: QTableWidgetItem) -> None:
+        if item.column() != 1:
+            return
+        self.invalidate_copy_plan()
+        status = self.plan_table.item(item.row(), 3)
+        if status:
+            status.setText("再確認が必要")
+
+    def save_organizer_defaults(self) -> None:
+        self.organizer_settings = {
+            "default_destination": self.destination_combo.currentText().strip(),
+            "naming_template": str(self.naming_combo.currentData()),
+            "custom_template": self.custom_template.text().strip(),
+            "keep_subfolders": self.keep_subfolders.isChecked(),
+            "collision": str(self.collision_combo.currentData()),
+        }
+        self.status_label.setText("現在の整理コピー設定を既定値として保存しました。")
 
     @Slot(str)
     def set_dropped_destination(self, folder: str) -> None:
@@ -624,16 +1017,22 @@ class FileManagerDialog(QDialog):
                 self, "安全確認", "コピー先には、対象フォルダーの外側を指定してください。\n元データ側には何も作成しません。"
             )
             return
-        template = self.name_template.currentText().strip() or "{name}"
-        if len(details) == 1 and "{" not in template:
-            template = template
-        elif len(details) > 1 and "{" not in template:
-            QMessageBox.warning(self, "確認", "複数ファイルでは {index} などを含む命名ルールを指定してください。")
+        if self.plan_table.rowCount() != len(details):
+            self.refresh_rename_table(preserve=True)
+        overrides: dict[str, str] = {}
+        for row in range(self.plan_table.rowCount()):
+            source_item = self.plan_table.item(row, 0)
+            name_item = self.plan_table.item(row, 1)
+            if source_item and name_item:
+                overrides[str(source_item.data(Qt.ItemDataRole.UserRole))] = name_item.text().strip()
+        if any(not value for value in overrides.values()):
+            QMessageBox.warning(self, "確認", "新しいファイル名が空欄の行があります。")
             return
         try:
             self.copy_plans = build_copy_plans(
-                details, destination, template, self.keep_subfolders.isChecked(),
-                str(self.collision_combo.currentData()),
+                details, destination, self.current_naming_template(),
+                self.keep_subfolders.isChecked(), str(self.collision_combo.currentData()),
+                name_overrides=overrides,
             )
         except ValueError as exc:
             QMessageBox.warning(self, "命名ルール", str(exc))
@@ -644,10 +1043,22 @@ class FileManagerDialog(QDialog):
         self.status_label.setText("コピー内容を確認してください。まだコピーは実行していません。")
 
     def populate_plan_table(self) -> None:
+        self.plan_table.blockSignals(True)
         self.plan_table.setRowCount(len(self.copy_plans))
         for row, plan in enumerate(self.copy_plans):
-            for column, value in enumerate((plan.relative_path, str(plan.destination), plan.status)):
-                self.plan_table.setItem(row, column, QTableWidgetItem(value))
+            original = QTableWidgetItem(Path(plan.relative_path).name)
+            original.setData(Qt.ItemDataRole.UserRole, str(plan.source))
+            original.setToolTip(plan.relative_path)
+            new_name = QTableWidgetItem(plan.destination.name)
+            destination = QTableWidgetItem(str(plan.destination))
+            status = QTableWidgetItem(plan.status)
+            for item in (original, destination, status):
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.plan_table.setItem(row, 0, original)
+            self.plan_table.setItem(row, 1, new_name)
+            self.plan_table.setItem(row, 2, destination)
+            self.plan_table.setItem(row, 3, status)
+        self.plan_table.blockSignals(False)
 
     def start_copy(self) -> None:
         if not self.copy_plans or not self.copy_ready:
@@ -672,4 +1083,82 @@ class FileManagerDialog(QDialog):
             QMessageBox.information(self, "処理中", "処理を中止してから閉じてください。")
             event.ignore()
             return
+        self.media_player.stop()
         event.accept()
+
+
+class OrganizerSettingsDialog(QDialog):
+    """Edit organizer defaults without requiring a source scan."""
+
+    def __init__(
+        self, settings: dict[str, object], destination_history: list[str], parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("整理コピーの既定設定")
+        self.resize(720, 340)
+        layout = QVBoxLayout(self)
+        title = QLabel("整理コピーの既定設定")
+        title.setStyleSheet("font-size:16pt;font-weight:700")
+        layout.addWidget(title)
+        help_label = QLabel(
+            "ここでよく使う設定を決められます。実際の整理コピー画面では、毎回変更できます。"
+        )
+        help_label.setWordWrap(True)
+        layout.addWidget(help_label)
+        form = QFormLayout()
+        destination_row = QHBoxLayout()
+        self.destination = FolderDropComboBox()
+        self.destination.setEditable(True)
+        self.destination.addItems(destination_history)
+        self.destination.setCurrentText(str(settings.get("default_destination", "")))
+        browse = QPushButton("参照…")
+        browse.clicked.connect(self.choose_destination)
+        destination_row.addWidget(self.destination, 1)
+        destination_row.addWidget(browse)
+        form.addRow("既定のコピー先", destination_row)
+        self.naming = QComboBox()
+        for label, template in FileManagerDialog.NAMING_PRESETS:
+            self.naming.addItem(label, template)
+        index = self.naming.findData(str(settings.get("naming_template", "{name}")))
+        self.naming.setCurrentIndex(max(index, 0))
+        self.naming.currentIndexChanged.connect(self.update_custom_visibility)
+        form.addRow("名前の付け方", self.naming)
+        self.custom = QLineEdit(str(settings.get("custom_template", "{name}")))
+        form.addRow("高度な命名ルール", self.custom)
+        self.keep_subfolders = QCheckBox("元のサブフォルダー構成を維持する")
+        self.keep_subfolders.setChecked(bool(settings.get("keep_subfolders", True)))
+        form.addRow("", self.keep_subfolders)
+        self.collision = QComboBox()
+        self.collision.addItem("自動で連番を付ける（推奨）", "number")
+        self.collision.addItem("同名ファイルはスキップ", "skip")
+        collision_index = self.collision.findData(str(settings.get("collision", "number")))
+        self.collision.setCurrentIndex(max(collision_index, 0))
+        form.addRow("同名ファイル", self.collision)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText("保存")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("キャンセル")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.update_custom_visibility()
+
+    def choose_destination(self) -> None:
+        initial = self.destination.currentText().strip()
+        selected = QFileDialog.getExistingDirectory(self, "既定のコピー先", initial)
+        if selected:
+            self.destination.setCurrentText(selected)
+
+    def update_custom_visibility(self, *_args) -> None:  # type: ignore[no-untyped-def]
+        self.custom.setVisible(self.naming.currentData() == "__custom__")
+
+    def values(self) -> dict[str, object]:
+        return {
+            "default_destination": self.destination.currentText().strip(),
+            "naming_template": str(self.naming.currentData()),
+            "custom_template": self.custom.text().strip(),
+            "keep_subfolders": self.keep_subfolders.isChecked(),
+            "collision": str(self.collision.currentData()),
+        }

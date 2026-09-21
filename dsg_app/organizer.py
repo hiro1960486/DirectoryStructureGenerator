@@ -1,6 +1,6 @@
 """Non-destructive file organization by copying to a chosen destination.
 
-Version: 2.2.0
+Version: 2.3.0
 Updated: 2026-09-21
 Author: hiro1960
 """
@@ -57,7 +57,7 @@ def rendered_name(detail: FileDetail, template: str, index: int) -> str:
         "index": index,
         "date": datetime.now().strftime("%Y%m%d"),
         "created": detail.created[:10].replace("-", "") if detail.created else "",
-        "type": "images" if detail.is_image else "files",
+        "type": "images" if detail.is_image else "videos" if detail.is_video else "files",
     }
     try:
         name = template.format(**values)
@@ -84,14 +84,19 @@ def build_copy_plans(
     template: str,
     keep_subfolders: bool,
     collision: str,
+    name_overrides: dict[str, str] | None = None,
 ) -> list[CopyPlan]:
     root = destination_root.expanduser().resolve()
     plans: list[CopyPlan] = []
     reserved: set[str] = set()
+    name_overrides = name_overrides or {}
     for index, detail in enumerate(details, start=1):
         source = Path(detail.full_path).resolve()
         relative_parent = Path(detail.relative_path).parent if keep_subfolders else Path()
-        filename = rendered_name(detail, template, index)
+        override = name_overrides.get(detail.full_path, "").strip()
+        filename = sanitize_filename(override) if override else rendered_name(detail, template, index)
+        if override and not Path(filename).suffix and Path(detail.name).suffix:
+            filename += Path(detail.name).suffix
         destination = root / relative_parent / filename
         normalized = os.path.normcase(str(destination))
         if source == destination:
