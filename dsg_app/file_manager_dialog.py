@@ -10,7 +10,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QPixmap
+from PySide6.QtGui import (
+    QCloseEvent, QDesktopServices, QDragEnterEvent, QDragMoveEvent, QDropEvent,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar,
@@ -26,6 +29,88 @@ from .file_inspector import (
 from .models import FilterSettings
 from .organizer import CopyCancelled, CopyPlan, build_copy_plans, execute_copy_plans
 from .scanner import DirectoryScanner, ScanCancelled
+
+
+def first_dropped_directory(urls: list[QUrl]) -> str | None:
+    """Return the first existing local directory from a drop operation."""
+    for url in urls:
+        if not url.isLocalFile():
+            continue
+        candidate = Path(url.toLocalFile())
+        if candidate.is_dir():
+            return str(candidate.resolve())
+    return None
+
+
+class FolderDropComboBox(QComboBox):
+    """Editable destination field that accepts a dropped local folder."""
+
+    folderDropped = Signal(str)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+
+    @staticmethod
+    def _folder(event: QDragEnterEvent | QDragMoveEvent | QDropEvent) -> str | None:
+        mime = event.mimeData()
+        return first_dropped_directory(mime.urls()) if mime.hasUrls() else None
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if self._folder(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if self._folder(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        folder = self._folder(event)
+        if not folder:
+            event.ignore()
+            return
+        self.setCurrentText(folder)
+        self.folderDropped.emit(folder)
+        event.acceptProposedAction()
+
+
+class FolderDropWidget(QWidget):
+    """Organize tab that accepts a dropped local folder anywhere on the tab."""
+
+    folderDropped = Signal(str)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+
+    @staticmethod
+    def _folder(event: QDragEnterEvent | QDragMoveEvent | QDropEvent) -> str | None:
+        mime = event.mimeData()
+        return first_dropped_directory(mime.urls()) if mime.hasUrls() else None
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if self._folder(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if self._folder(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        folder = self._folder(event)
+        if not folder:
+            event.ignore()
+            return
+        self.folderDropped.emit(folder)
+        event.acceptProposedAction()
 
 
 class InspectionWorker(QObject):
@@ -236,24 +321,33 @@ class FileManagerDialog(QDialog):
         return tab
 
     def _organize_tab(self) -> QWidget:
-        tab = QWidget()
+        tab = FolderDropWidget()
+        tab.folderDropped.connect(self.set_dropped_destination)
         layout = QVBoxLayout(tab)
         self.selection_label = QLabel("詳細画面でコピーしたいファイルを選択してください。")
         self.selection_label.setStyleSheet("font-weight:600")
         layout.addWidget(self.selection_label)
         form = QFormLayout()
         destination_row = QHBoxLayout()
-        self.destination_combo = QComboBox()
+        self.destination_combo = FolderDropComboBox()
         self.destination_combo.setEditable(True)
         self.destination_combo.addItems(self.destination_history)
         if not self.destination_history:
             self.destination_combo.setCurrentText(str(self.output / "Organized_Files"))
         self.destination_combo.currentTextChanged.connect(self.invalidate_copy_plan)
+        self.destination_combo.folderDropped.connect(self.set_dropped_destination)
         browse = QPushButton("参照…")
         browse.clicked.connect(self.choose_destination)
         destination_row.addWidget(self.destination_combo, 1)
         destination_row.addWidget(browse)
         form.addRow("コピー先", destination_row)
+        drop_help = QLabel(
+            "エクスプローラーからコピー先フォルダーを、この画面またはコピー先欄へ"
+            "ドラッグ＆ドロップできます。"
+        )
+        drop_help.setWordWrap(True)
+        drop_help.setStyleSheet("color:#2563eb")
+        form.addRow("", drop_help)
 
         self.name_template = QComboBox()
         self.name_template.setEditable(True)
@@ -508,6 +602,12 @@ class FileManagerDialog(QDialog):
         selected = QFileDialog.getExistingDirectory(self, "整理コピー先を選択", initial)
         if selected:
             self.destination_combo.setCurrentText(selected)
+
+    @Slot(str)
+    def set_dropped_destination(self, folder: str) -> None:
+        self.destination_combo.setCurrentText(folder)
+        if hasattr(self, "status_label"):
+            self.status_label.setText(f"コピー先を設定しました: {folder}")
 
     def prepare_copy(self) -> None:
         details = self.selected_details()
