@@ -1,9 +1,9 @@
-# Directory Structure Generator Ver.2.3.0
+# Directory Structure Generator Ver.2.4.0
 
 フォルダー構成を走査し、必要な項目だけを **TXT / HTML / CSV / JSON** に出力するWindows向けGUIアプリです。
 
-- Version: 2.3.0
-- Updated: 2026-09-21
+- Version: 2.4.0
+- Updated: 2026-09-22
 - Author: hiro1960
 - UI: PySide6
 - 対応OS: Windows 10 / 11（64ビット推奨）
@@ -11,6 +11,13 @@
 
 ## 今回の主な改善
 
+- 画像・動画・音声・文書・その他を複数同時に選べるチップ型フィルター
+- 検索結果に連動する件数バッジと、条件クリア／適用ボタン
+- ヘッダーの三状態チェック、選択件数／表示件数の常時表示
+- Shiftクリック範囲選択、Ctrl+A、フィルター変更時の安全な選択解除
+- MP3 / WAV / FLAC / AAC / M4A / OGG等の音声解析・再生
+- 文書・コードは描画せず、メタ情報だけを表示する安定重視の設計
+- 大量ファイルを整理コピーする前の件数・コピー先確認
 - ファイル名と保存場所を分離した、列幅変更可能な一覧表示
 - チェック式の複数選択と、表示中の全選択・解除・反転
 - 画像プレビューの安定化と、動画の再生・シーク・詳細情報表示
@@ -94,7 +101,8 @@ target               Rust・Javaなどの生成物
 
 ## 操作マニュアル（PDF）
 
-- [Directory Structure Generator Ver.2.3.0 操作マニュアル](docs/DirectoryStructureGenerator_Ver2.3.0_操作マニュアル.pdf)
+- 現在の公開版：[Directory Structure Generator Ver.2.3.0 操作マニュアル](docs/DirectoryStructureGenerator_Ver2.3.0_操作マニュアル.pdf)
+- Ver.2.4.0版は、Windowsでの画面確認後に新しいスクリーンショットへ差し替えます。
 
 `START_APP.bat`はCMD画面を勝手に閉じません。起動に失敗した場合は、同じフォルダーの`startup_error.log`に原因を保存して画面にも表示します。
 

@@ -7,7 +7,8 @@ from pathlib import Path
 from PIL import Image
 
 from dsg_app.file_inspector import (
-    FileDetail, export_details_csv, export_details_json, inspect_scan_result,
+    FileDetail, category_for_extension, export_details_csv, export_details_json,
+    inspect_scan_result,
 )
 from dsg_app.models import FilterSettings
 from dsg_app.scanner import DirectoryScanner
@@ -69,6 +70,26 @@ class FileInspectorTests(unittest.TestCase):
         self.assertEqual(detail.media_format, "MP4")
         self.assertEqual(detail.resolution, "1920 × 1080")
         self.assertEqual(detail.duration, "01:05")
+
+    def test_filter_categories_cover_media_documents_and_other_files(self):
+        self.assertEqual(category_for_extension(".heic"), "image")
+        self.assertEqual(category_for_extension(".mkv"), "video")
+        self.assertEqual(category_for_extension(".flac"), "audio")
+        self.assertEqual(category_for_extension(".pdf"), "document")
+        self.assertEqual(category_for_extension(".py"), "other")
+
+    def test_audio_display_fields(self):
+        detail = FileDetail(
+            name="sample.flac", relative_path="media/sample.flac", full_path="sample.flac",
+            category="audio", extension=".flac", file_size=100, modified="", created="",
+            permissions="-rw-r--r--", readonly=False, audio_format="FLAC",
+            duration_seconds=125.2, audio_codec="FLAC",
+        )
+
+        self.assertTrue(detail.is_audio)
+        self.assertTrue(detail.is_media)
+        self.assertEqual(detail.media_format, "FLAC")
+        self.assertEqual(detail.duration, "02:05")
 
 
 if __name__ == "__main__":

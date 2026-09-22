@@ -1,7 +1,7 @@
 """Popup UI for read-only inspection and non-destructive organization copies.
 
-Version: 2.3.0
-Updated: 2026-09-21
+Version: 2.4.0
+Updated: 2026-09-22
 Author: hiro1960
 """
 
@@ -9,18 +9,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QThread, Qt, QUrl, Signal, Slot
+from PySide6.QtCore import QEvent, QObject, QRect, QThread, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import (
     QCloseEvent, QDesktopServices, QDragEnterEvent, QDragMoveEvent, QDropEvent,
-    QImage, QPixmap,
+    QImage, QKeySequence, QMouseEvent, QPainter, QPixmap, QShortcut,
 )
 from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+    QFileDialog, QFormLayout,
     QFrame, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
     QMessageBox, QProgressBar, QPushButton, QSlider, QSplitter, QStackedWidget,
-    QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QStyle, QStyleOptionButton, QTabWidget, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget,
 )
 
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -120,6 +122,57 @@ class FolderDropWidget(QWidget):
         event.acceptProposedAction()
 
 
+class CheckableHeaderView(QHeaderView):
+    """Header with a tri-state checkbox in the first column."""
+
+    checkStateClicked = Signal(int)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self._check_state = Qt.CheckState.Unchecked
+
+    def setCheckState(self, state: Qt.CheckState) -> None:
+        if state == self._check_state:
+            return
+        self._check_state = state
+        self.viewport().update()
+
+    def paintSection(self, painter: QPainter, rect: QRect, logical_index: int) -> None:
+        super().paintSection(painter, rect, logical_index)
+        if logical_index != 0:
+            return
+        option = QStyleOptionButton()
+        option.state = QStyle.StateFlag.State_Enabled
+        if self._check_state == Qt.CheckState.Checked:
+            option.state |= QStyle.StateFlag.State_On
+        elif self._check_state == Qt.CheckState.PartiallyChecked:
+            option.state |= QStyle.StateFlag.State_NoChange
+        else:
+            option.state |= QStyle.StateFlag.State_Off
+        indicator = QApplication.style().subElementRect(
+            QStyle.SubElement.SE_CheckBoxIndicator, option, self
+        )
+        option.rect = QRect(
+            rect.left() + (rect.width() - indicator.width()) // 2,
+            rect.top() + (rect.height() - indicator.height()) // 2,
+            indicator.width(), indicator.height(),
+        )
+        QApplication.style().drawControl(
+            QStyle.ControlElement.CE_CheckBox, option, painter, self
+        )
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if self.logicalIndexAt(event.position().toPoint()) == 0:
+            next_state = (
+                Qt.CheckState.Unchecked
+                if self._check_state == Qt.CheckState.Checked
+                else Qt.CheckState.Checked
+            )
+            self.checkStateClicked.emit(next_state.value)
+            return
+        super().mousePressEvent(event)
+
+
 class InspectionWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
@@ -199,6 +252,10 @@ class FileManagerDialog(QDialog):
     NAME_COLUMN = 1
     PATH_COLUMN = 2
     CATEGORY_COLUMN = 3
+    FILTER_CATEGORIES = [
+        ("image", "画像"), ("video", "動画"), ("audio", "音声"),
+        ("document", "文書"), ("other", "その他"),
+    ]
     NAMING_PRESETS = [
         ("元の名前のまま（おすすめ）", "{name}"),
         ("1件ずつ新しい名前を設定", "__individual__"),
@@ -226,6 +283,9 @@ class FileManagerDialog(QDialog):
         self.worker: InspectionWorker | CopyWorker | None = None
         self._mode = ""
         self._table_populating = False
+        self._applied_categories: set[str] = set()
+        self._last_filter_signature: tuple[str, tuple[str, ...]] | None = None
+        self._last_check_row: int | None = None
         self.media_duration = 0
         self.setWindowTitle("ファイル詳細・整理コピー")
         self.resize(1480, 860)
@@ -298,10 +358,36 @@ class FileManagerDialog(QDialog):
         options.addWidget(self.inspect_button)
         layout.addLayout(options)
 
-        filters = QHBoxLayout()
-        self.type_filter = QComboBox()
-        self.type_filter.addItems(["すべて", "一般ファイル", "画像ファイル", "動画ファイル"])
-        self.type_filter.currentTextChanged.connect(self.apply_filter)
+        filters = QVBoxLayout()
+        chip_row = QHBoxLayout()
+        chip_label = QLabel("種別")
+        chip_label.setStyleSheet("font-weight:700")
+        chip_row.addWidget(chip_label)
+        self.filter_buttons: dict[str, QPushButton] = {}
+        self.all_filter_button = QPushButton("すべて 0")
+        self.all_filter_button.setObjectName("filterChip")
+        self.all_filter_button.setCheckable(True)
+        self.all_filter_button.setChecked(True)
+        self.all_filter_button.clicked.connect(self.select_all_filter_categories)
+        chip_row.addWidget(self.all_filter_button)
+        for key, label in self.FILTER_CATEGORIES:
+            button = QPushButton(f"{label} 0")
+            button.setObjectName("filterChip")
+            button.setCheckable(True)
+            button.toggled.connect(self.on_filter_chip_toggled)
+            self.filter_buttons[key] = button
+            chip_row.addWidget(button)
+        chip_row.addStretch()
+        self.clear_filter_button = QPushButton("条件をクリア")
+        self.clear_filter_button.clicked.connect(self.clear_filters)
+        self.apply_filter_button = QPushButton("適用")
+        self.apply_filter_button.setObjectName("primary")
+        self.apply_filter_button.clicked.connect(self.commit_category_filter)
+        chip_row.addWidget(self.clear_filter_button)
+        chip_row.addWidget(self.apply_filter_button)
+        filters.addLayout(chip_row)
+
+        action_row = QHBoxLayout()
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("ファイル名・パスを検索")
         self.search_edit.setClearButtonEnabled(True)
@@ -312,19 +398,22 @@ class FileManagerDialog(QDialog):
         self.json_button.setEnabled(False)
         self.csv_button.clicked.connect(lambda: self.save_report("csv"))
         self.json_button.clicked.connect(lambda: self.save_report("json"))
-        filters.addWidget(self.type_filter)
-        filters.addWidget(self.search_edit, 1)
+        action_row.addWidget(self.search_edit, 1)
         self.select_all_button = QPushButton("表示中を選択")
         self.clear_selection_button = QPushButton("選択解除")
         self.invert_selection_button = QPushButton("選択反転")
         self.select_all_button.clicked.connect(lambda: self.set_visible_checks("all"))
         self.clear_selection_button.clicked.connect(lambda: self.set_visible_checks("none"))
         self.invert_selection_button.clicked.connect(lambda: self.set_visible_checks("invert"))
-        filters.addWidget(self.select_all_button)
-        filters.addWidget(self.clear_selection_button)
-        filters.addWidget(self.invert_selection_button)
-        filters.addWidget(self.csv_button)
-        filters.addWidget(self.json_button)
+        action_row.addWidget(self.select_all_button)
+        action_row.addWidget(self.clear_selection_button)
+        action_row.addWidget(self.invert_selection_button)
+        action_row.addWidget(self.csv_button)
+        action_row.addWidget(self.json_button)
+        filters.addLayout(action_row)
+        self.selection_count_label = QLabel("選択中 0件 ／ 表示中 0件")
+        self.selection_count_label.setStyleSheet("font-weight:700;color:#2563eb")
+        filters.addWidget(self.selection_count_label)
         layout.addLayout(filters)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -338,7 +427,9 @@ class FileManagerDialog(QDialog):
         self.table.setSortingEnabled(True)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(28)
-        header = self.table.horizontalHeader()
+        header = CheckableHeaderView(self.table)
+        self.table.setHorizontalHeader(header)
+        header.checkStateClicked.connect(self.set_header_check_state)
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setMinimumSectionSize(42)
         header.setStretchLastSection(False)
@@ -350,6 +441,9 @@ class FileManagerDialog(QDialog):
         self.table.itemSelectionChanged.connect(self.update_preview)
         self.table.itemChanged.connect(self.on_table_item_changed)
         self.table.currentCellChanged.connect(lambda *_args: self.update_preview())
+        self.table.viewport().installEventFilter(self)
+        self.select_all_shortcut = QShortcut(QKeySequence.StandardKey.SelectAll, self.table)
+        self.select_all_shortcut.activated.connect(lambda: self.set_visible_checks("all"))
         splitter.addWidget(self.table)
 
         preview = QFrame(objectName="previewCard")
@@ -359,7 +453,7 @@ class FileManagerDialog(QDialog):
         preview_title.setStyleSheet("font-size:12pt;font-weight:700")
         preview_layout.addWidget(preview_title)
         self.preview_stack = QStackedWidget()
-        self.preview_placeholder = QLabel("画像または動画を選択すると\nここにプレビューします")
+        self.preview_placeholder = QLabel("画像・動画・音声を選択すると\nここにプレビューします")
         self.preview_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_placeholder.setMinimumHeight(260)
         self.thumbnail = QLabel()
@@ -573,9 +667,10 @@ class FileManagerDialog(QDialog):
             errors = sum(bool(detail.error) for detail in self.details)
             images = sum(detail.is_image for detail in self.details)
             videos = sum(detail.is_video for detail in self.details)
+            audios = sum(detail.is_audio for detail in self.details)
             self.status_label.setText(
                 f"解析完了: 全{len(self.details):,}件 ｜ 画像{images:,}件 ｜ "
-                f"動画{videos:,}件 ｜ エラー{errors:,}件"
+                f"動画{videos:,}件 ｜ 音声{audios:,}件 ｜ エラー{errors:,}件"
             )
         else:
             self.copy_plans = list(result)  # type: ignore[arg-type]
@@ -639,7 +734,7 @@ class FileManagerDialog(QDialog):
                 location = "（対象フォルダー直下）"
             values = [
                 detail.name, location,
-                "画像" if detail.is_image else "動画" if detail.is_video else "一般",
+                self.category_label(detail.category),
                 detail.extension,
                 format_size(detail.file_size), detail.modified, detail.created,
                 "" if detail.line_count is None else f"{detail.line_count:,}",
@@ -660,26 +755,138 @@ class FileManagerDialog(QDialog):
         self.json_button.setEnabled(bool(self.details))
         self.apply_filter()
 
-    def apply_filter(self) -> None:
+    @staticmethod
+    def category_label(category: str) -> str:
+        return {
+            "image": "画像", "video": "動画", "audio": "音声",
+            "document": "文書", "other": "その他",
+        }.get(category, "その他")
+
+    def select_all_filter_categories(self) -> None:
+        self.all_filter_button.setChecked(True)
+        for button in self.filter_buttons.values():
+            button.blockSignals(True)
+            button.setChecked(False)
+            button.blockSignals(False)
+        self.commit_category_filter()
+
+    def on_filter_chip_toggled(self, checked: bool) -> None:
+        if checked:
+            self.all_filter_button.blockSignals(True)
+            self.all_filter_button.setChecked(False)
+            self.all_filter_button.blockSignals(False)
+        elif not any(button.isChecked() for button in self.filter_buttons.values()):
+            self.all_filter_button.blockSignals(True)
+            self.all_filter_button.setChecked(True)
+            self.all_filter_button.blockSignals(False)
+
+    def commit_category_filter(self) -> None:
+        self._applied_categories = {
+            key for key, button in self.filter_buttons.items() if button.isChecked()
+        }
+        self.apply_filter()
+
+    def clear_filters(self) -> None:
+        self.search_edit.blockSignals(True)
+        self.search_edit.clear()
+        self.search_edit.blockSignals(False)
+        self.select_all_filter_categories()
+
+    def _matches_search(self, row: int, search: str) -> bool:
+        name_item = self.table.item(row, self.NAME_COLUMN)
+        path_item = self.table.item(row, self.PATH_COLUMN)
+        searchable = " ".join(
+            item.text().casefold() for item in (name_item, path_item) if item
+        )
+        return search in searchable
+
+    def update_filter_counts(self, search: str) -> None:
+        counts = {key: 0 for key, _label in self.FILTER_CATEGORIES}
+        total = 0
+        for row in range(self.table.rowCount()):
+            if not self._matches_search(row, search):
+                continue
+            total += 1
+            item = self.table.item(row, self.CHECK_COLUMN)
+            detail = self.detail_by_path.get(str(item.data(Qt.ItemDataRole.UserRole))) if item else None
+            if detail and detail.category in counts:
+                counts[detail.category] += 1
+        self.all_filter_button.setText(f"すべて {total:,}")
+        for key, label in self.FILTER_CATEGORIES:
+            button = self.filter_buttons[key]
+            button.setText(f"{label} {counts[key]:,}")
+            button.setEnabled(counts[key] > 0)
+
+    def apply_filter(self, *_args) -> None:  # type: ignore[no-untyped-def]
         if not hasattr(self, "table"):
             return
         search = self.search_edit.text().casefold()
-        kind = self.type_filter.currentText()
+        signature = (search, tuple(sorted(self._applied_categories)))
+        if self._last_filter_signature is not None and signature != self._last_filter_signature:
+            self.reset_checked_selection()
+        self._last_filter_signature = signature
+        self.update_filter_counts(search)
         for row in range(self.table.rowCount()):
-            name_item = self.table.item(row, self.NAME_COLUMN)
-            path_item = self.table.item(row, self.PATH_COLUMN)
-            type_item = self.table.item(row, self.CATEGORY_COLUMN)
-            searchable = " ".join(
-                item.text().casefold() for item in (name_item, path_item) if item
-            )
-            visible = search in searchable
-            if kind == "一般ファイル":
-                visible = visible and bool(type_item and type_item.text() == "一般")
-            elif kind == "画像ファイル":
-                visible = visible and bool(type_item and type_item.text() == "画像")
-            elif kind == "動画ファイル":
-                visible = visible and bool(type_item and type_item.text() == "動画")
+            item = self.table.item(row, self.CHECK_COLUMN)
+            detail = self.detail_by_path.get(str(item.data(Qt.ItemDataRole.UserRole))) if item else None
+            visible = self._matches_search(row, search)
+            if self._applied_categories:
+                visible = visible and bool(detail and detail.category in self._applied_categories)
             self.table.setRowHidden(row, not visible)
+        self.update_selection_state()
+
+    def reset_checked_selection(self) -> None:
+        if not hasattr(self, "table"):
+            return
+        self._table_populating = True
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, self.CHECK_COLUMN)
+            if item:
+                item.setCheckState(Qt.CheckState.Unchecked)
+        self._table_populating = False
+        self.table.clearSelection()
+        self.invalidate_copy_plan()
+
+    def visible_rows(self) -> list[int]:
+        return [row for row in range(self.table.rowCount()) if not self.table.isRowHidden(row)]
+
+    def checked_count(self) -> int:
+        return sum(
+            bool(
+                (item := self.table.item(row, self.CHECK_COLUMN))
+                and item.checkState() == Qt.CheckState.Checked
+            )
+            for row in range(self.table.rowCount())
+        )
+
+    def update_selection_state(self) -> None:
+        visible = self.visible_rows()
+        visible_checked = sum(
+            bool(
+                (item := self.table.item(row, self.CHECK_COLUMN))
+                and item.checkState() == Qt.CheckState.Checked
+            )
+            for row in visible
+        )
+        if not visible or visible_checked == 0:
+            state = Qt.CheckState.Unchecked
+        elif visible_checked == len(visible):
+            state = Qt.CheckState.Checked
+        else:
+            state = Qt.CheckState.PartiallyChecked
+        header = self.table.horizontalHeader()
+        if isinstance(header, CheckableHeaderView):
+            header.setCheckState(state)
+        total_checked = self.checked_count()
+        self.selection_count_label.setText(
+            f"選択中 {total_checked:,}件 ／ 表示中 {len(visible):,}件"
+        )
+        self.selection_label.setText(f"選択中: {total_checked:,}件")
+
+    @Slot(int)
+    def set_header_check_state(self, state_value: int) -> None:
+        state = Qt.CheckState(state_value)
+        self.set_visible_checks("all" if state == Qt.CheckState.Checked else "none")
 
     def set_visible_checks(self, mode: str) -> None:
         self._table_populating = True
@@ -693,12 +900,46 @@ class FileManagerDialog(QDialog):
             new_checked = not checked if mode == "invert" else mode == "all"
             item.setCheckState(Qt.CheckState.Checked if new_checked else Qt.CheckState.Unchecked)
         self._table_populating = False
+        self.update_selection_state()
         self.update_preview()
 
     def on_table_item_changed(self, item: QTableWidgetItem) -> None:
         if self._table_populating or item.column() != self.CHECK_COLUMN:
             return
+        self.update_selection_state()
         self.update_preview()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self.table.viewport() and event.type() == QEvent.Type.MouseButtonPress:
+            mouse_event = event
+            if isinstance(mouse_event, QMouseEvent):
+                index = self.table.indexAt(mouse_event.position().toPoint())
+                if index.isValid() and index.column() == self.CHECK_COLUMN:
+                    if (
+                        mouse_event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                        and self._last_check_row is not None
+                    ):
+                        clicked = self.table.item(index.row(), self.CHECK_COLUMN)
+                        target = (
+                            Qt.CheckState.Unchecked
+                            if clicked and clicked.checkState() == Qt.CheckState.Checked
+                            else Qt.CheckState.Checked
+                        )
+                        first, last = sorted((self._last_check_row, index.row()))
+                        self._table_populating = True
+                        for row in range(first, last + 1):
+                            if self.table.isRowHidden(row):
+                                continue
+                            item = self.table.item(row, self.CHECK_COLUMN)
+                            if item:
+                                item.setCheckState(target)
+                        self._table_populating = False
+                        self.table.setCurrentCell(index.row(), self.NAME_COLUMN)
+                        self.update_selection_state()
+                        self.update_preview()
+                        return True
+                    self._last_check_row = index.row()
+        return super().eventFilter(watched, event)
 
     def selected_details(self) -> list[FileDetail]:
         selected: list[FileDetail] = []
@@ -708,12 +949,6 @@ class FileManagerDialog(QDialog):
                 detail = self.detail_by_path.get(str(item.data(Qt.ItemDataRole.UserRole)))
                 if detail:
                     selected.append(detail)
-        if selected:
-            return selected
-        for index in self.table.selectionModel().selectedRows():
-            item = self.table.item(index.row(), self.NAME_COLUMN)
-            if item and (detail := self.detail_by_path.get(str(item.data(Qt.ItemDataRole.UserRole)))):
-                selected.append(detail)
         return selected
 
     def focused_detail(self) -> FileDetail | None:
@@ -765,17 +1000,26 @@ class FileManagerDialog(QDialog):
             else:
                 self.preview_placeholder.setText("画像を表示できません")
                 self.preview_stack.setCurrentWidget(self.preview_placeholder)
-        elif detail.is_video:
+        elif detail.is_video or detail.is_audio:
             source = QUrl.fromLocalFile(detail.full_path)
             if self.media_player.source() != source:
                 self.media_player.stop()
                 self.media_player.setSource(source)
-            self.preview_stack.setCurrentWidget(self.video_widget)
+            if detail.is_video:
+                self.preview_stack.setCurrentWidget(self.video_widget)
+            else:
+                self.preview_placeholder.setText(
+                    f"音声ファイル\n{detail.media_format or detail.extension.upper()}\n"
+                    "下の再生ボタンで確認できます"
+                )
+                self.preview_stack.setCurrentWidget(self.preview_placeholder)
             self.media_controls_widget.setVisible(True)
         else:
             self.media_player.stop()
             self.media_controls_widget.setVisible(False)
-            self.preview_placeholder.setText("このファイルはプレビュー対象外です")
+            self.preview_placeholder.setText(
+                "このファイルはプレビュー対象外です\nサイズ・日時などの情報を確認できます"
+            )
             self.preview_stack.setCurrentWidget(self.preview_placeholder)
 
     @staticmethod
@@ -826,7 +1070,7 @@ class FileManagerDialog(QDialog):
 
     def on_media_metadata_changed(self) -> None:
         detail = self.focused_detail()
-        if not detail or not detail.is_video:
+        if not detail or not (detail.is_video or detail.is_audio):
             return
         metadata = self.media_player.metaData()
 
@@ -834,11 +1078,12 @@ class FileManagerDialog(QDialog):
             key = getattr(QMediaMetaData.Key, key_name, None)
             return metadata.stringValue(key) if key is not None else ""
 
-        frame_rate_key = getattr(QMediaMetaData.Key, "VideoFrameRate", None)
-        frame_rate = metadata.value(frame_rate_key) if frame_rate_key is not None else None
-        if frame_rate:
-            detail.frame_rate = f"{float(frame_rate):.3g} fps"
-        detail.video_codec = text("VideoCodec") or detail.video_codec
+        if detail.is_video:
+            frame_rate_key = getattr(QMediaMetaData.Key, "VideoFrameRate", None)
+            frame_rate = metadata.value(frame_rate_key) if frame_rate_key is not None else None
+            if frame_rate:
+                detail.frame_rate = f"{float(frame_rate):.3g} fps"
+            detail.video_codec = text("VideoCodec") or detail.video_codec
         detail.audio_codec = text("AudioCodec") or detail.audio_codec
         channels = text("AudioChannelCount")
         detail.audio_channels = channels or detail.audio_channels
@@ -1063,9 +1308,15 @@ class FileManagerDialog(QDialog):
     def start_copy(self) -> None:
         if not self.copy_plans or not self.copy_ready:
             return
+        count = len(self.copy_plans)
+        warning = (
+            "\n\n大量のファイルが選択されています。件数とコピー先をもう一度確認してください。"
+            if count >= 100 else ""
+        )
         answer = QMessageBox.question(
             self, "整理コピーの実行",
-            f"{len(self.copy_plans):,}件の計画を実行します。\n元ファイルは変更されません。\n\n実行しますか？",
+            f"{count:,}件の計画を実行します。\n元ファイルは変更されません。"
+            f"{warning}\n\n実行しますか？",
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
