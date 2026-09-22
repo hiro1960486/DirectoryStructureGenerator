@@ -1,12 +1,15 @@
 name: Build and publish Windows release
 
 on:
+  push:
+    branches:
+      - release/v2.7.0-publish
   workflow_dispatch:
     inputs:
       version:
-        description: Release tag such as v2.3.0
+        description: Release tag such as v2.7.0
         required: true
-        default: v2.3.0
+        default: v2.7.0
 
 permissions:
   contents: write
@@ -15,8 +18,10 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: Check out source
+      - name: Check out release source
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -36,7 +41,7 @@ jobs:
       - name: Package and calculate SHA256
         shell: pwsh
         run: |
-          $version = "${{ inputs.version }}".TrimStart('v')
+          $version = "2.7.0"
           $zip = "DirectoryStructureGeneratorGUI_Ver${version}_Windows_x64.zip"
           Copy-Item README.md "dist/DirectoryStructureGeneratorGUI/README.md"
           Compress-Archive -Path "dist/DirectoryStructureGeneratorGUI/*" -DestinationPath $zip -Force
@@ -48,19 +53,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $version = "${{ inputs.version }}".TrimStart('v')
+          $version = "2.7.0"
+          $tag = "v$version"
           $zip = "DirectoryStructureGeneratorGUI_Ver${version}_Windows_x64.zip"
           $assets = @($zip, "$zip.sha256.txt")
           $manual = "docs/DirectoryStructureGenerator_Ver${version}_操作マニュアル.pdf"
           if (Test-Path -LiteralPath $manual) {
             $assets += $manual
           } else {
-            Write-Host "Ver.${version} manual is not available yet; publishing ZIP and SHA256 only."
+            Write-Host "Ver.$version manual is not available yet; publishing ZIP and SHA256 only."
           }
-          git tag "${{ inputs.version }}" 2>$null
-          git push origin "${{ inputs.version }}"
-          gh release create "${{ inputs.version }}" `
+          git tag "$tag" 2>$null
+          git push origin "$tag"
+          gh release create "$tag" `
             $assets `
-            --title "Directory Structure Generator Ver.${version}" `
+            --title "Directory Structure Generator Ver.$version" `
             --notes-file "RELEASE_NOTES_v${version}.md" `
             --latest
