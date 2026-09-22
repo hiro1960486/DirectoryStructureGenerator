@@ -11,7 +11,7 @@ from typing import Any, Iterable
 
 MAX_FAVORITES = 5
 CSV_FIELDS = (
-    "favorite", "name", "memo", "source", "output",
+    "default", "quick", "order", "favorite", "name", "memo", "source", "output",
     "filters_json", "formats_json", "organizer_json",
 )
 
@@ -24,6 +24,24 @@ def _csv_safe(value: object) -> str:
 def _csv_restore(value: object) -> str:
     text = str(value or "")
     return text[1:] if len(text) > 1 and text[0] == "'" and text[1] in "=+-@\t\r" else text
+
+
+def _deduplicate_filter_lists(filters: dict[str, Any]) -> dict[str, Any]:
+    cleaned = deepcopy(filters)
+    for key in ("excluded_dirs", "excluded_extensions", "included_extensions", "patterns"):
+        values = cleaned.get(key, [])
+        if not isinstance(values, list):
+            continue
+        seen: set[str] = set()
+        unique: list[str] = []
+        for raw in values:
+            value = str(raw).strip()
+            folded = value.casefold()
+            if value and folded not in seen:
+                seen.add(folded)
+                unique.append(value)
+        cleaned[key] = unique
+    return cleaned
 
 
 def builtin_presets() -> list[dict[str, Any]]:
@@ -72,7 +90,11 @@ def builtin_presets() -> list[dict[str, Any]]:
     result = []
     for index, (name, memo, filters) in enumerate(definitions):
         item = deepcopy(common)
-        item.update({"name": name, "memo": memo, "favorite": index < MAX_FAVORITES, "filters": filters})
+        item.update({
+            "name": name, "memo": memo, "favorite": index < MAX_FAVORITES,
+            "quick": index < MAX_FAVORITES, "default": index == 0,
+            "order": index + 1, "filters": filters,
+        })
         result.append(item)
     return result
 
@@ -95,11 +117,15 @@ def normalize_preset(value: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": name,
         "memo": str(value.get("memo", "")).strip()[:500],
-        "favorite": bool(value.get("favorite", False)),
+        # favorite is retained as a compatibility alias for Ver.2.7 CSV/config files.
+        "favorite": bool(value.get("quick", value.get("favorite", False))),
+        "quick": bool(value.get("quick", value.get("favorite", False))),
+        "default": bool(value.get("default", False)),
+        "order": max(1, int(value.get("order", 999) or 999)),
         "builtin": bool(value.get("builtin", False)),
         "source": str(value.get("source", "")).strip(),
         "output": str(value.get("output", "")).strip(),
-        "filters": deepcopy(filters),
+        "filters": _deduplicate_filter_lists(filters),
         "formats": {str(k): bool(v) for k, v in formats.items()},
         "organizer": safe_organizer,
     }
@@ -108,18 +134,26 @@ def normalize_preset(value: dict[str, Any]) -> dict[str, Any]:
 def normalize_presets(values: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     names: set[str] = set()
-    favorite_count = 0
     for raw in values:
         item = normalize_preset(raw)
         folded = item["name"].casefold()
         if folded in names:
             continue
         names.add(folded)
-        if item["favorite"]:
-            favorite_count += 1
-            if favorite_count > MAX_FAVORITES:
-                item["favorite"] = False
         result.append(item)
+    result.sort(key=lambda item: (int(item.get("order", 999)), item["name"].casefold()))
+    default_index = next((i for i, item in enumerate(result) if item["default"]), 0)
+    for i, item in enumerate(result):
+        item["default"] = bool(result) and i == default_index
+    if result:
+        result[default_index]["quick"] = True
+    allowed_quick = {default_index}
+    for i, item in enumerate(result):
+        if i != default_index and item["quick"] and len(allowed_quick) < MAX_FAVORITES:
+            allowed_quick.add(i)
+    for i, item in enumerate(result):
+        item["quick"] = i in allowed_quick
+        item["favorite"] = item["quick"]
     return result
 
 
@@ -131,6 +165,9 @@ def export_presets_csv(path: Path, presets: Iterable[dict[str, Any]]) -> None:
         for raw in presets:
             item = normalize_preset(raw)
             writer.writerow({
+                "default": "true" if item["default"] else "false",
+                "quick": "true" if item["quick"] else "false",
+                "order": item["order"],
                 "favorite": "true" if item["favorite"] else "false",
                 "name": _csv_safe(item["name"]), "memo": _csv_safe(item["memo"]),
                 "source": _csv_safe(item["source"]), "output": _csv_safe(item["output"]),
@@ -144,16 +181,20 @@ def import_presets_csv(path: Path) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
-        missing = [field for field in CSV_FIELDS if field not in (reader.fieldnames or [])]
+        required = ("favorite", "name", "memo", "source", "output", "filters_json", "formats_json", "organizer_json")
+        missing = [field for field in required if field not in (reader.fieldnames or [])]
         if missing:
             raise ValueError("CSVに必要な列がありません: " + ", ".join(missing))
         for line_number, row in enumerate(reader, start=2):
             try:
                 favorite = str(row.get("favorite", "")).strip().lower() in {"1", "true", "yes", "on", "✓"}
+                quick = str(row.get("quick", row.get("favorite", ""))).strip().lower() in {"1", "true", "yes", "on", "✓"}
+                default = str(row.get("default", "")).strip().lower() in {"1", "true", "yes", "on", "✓"}
                 item = normalize_preset({
                     "name": _csv_restore(row.get("name", "")),
                     "memo": _csv_restore(row.get("memo", "")),
-                    "favorite": favorite, "builtin": False,
+                    "favorite": favorite, "quick": quick, "default": default,
+                    "order": row.get("order", 999), "builtin": False,
                     "source": _csv_restore(row.get("source", "")),
                     "output": _csv_restore(row.get("output", "")),
                     "filters": json.loads(row.get("filters_json", "{}") or "{}"),
