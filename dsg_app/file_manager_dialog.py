@@ -1,6 +1,6 @@
 """Popup UI for read-only inspection and safety-checked file organization.
 
-Version: 2.5.0
+Version: 2.6.0
 Updated: 2026-09-22
 Author: hiro1960
 """
@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, QRect, QThread, Qt, QUrl, Signal, Slot
+from PySide6.QtCore import (
+    QEvent, QItemSelectionModel, QObject, QRect, QThread, Qt, QUrl, Signal, Slot,
+)
 from PySide6.QtGui import (
     QCloseEvent, QDesktopServices, QDragEnterEvent, QDragMoveEvent, QDropEvent,
     QImage, QKeySequence, QMouseEvent, QPainter, QPixmap, QShortcut,
@@ -20,7 +22,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout,
     QFrame, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
-    QMessageBox, QProgressBar, QPushButton, QSlider, QSplitter, QStackedWidget,
+    QMenu, QMessageBox, QProgressBar, QPushButton, QSlider, QSplitter, QStackedWidget,
     QStyle, QStyleOptionButton, QTabWidget, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
@@ -38,6 +40,23 @@ from .organizer import (
     extension_was_changed, rendered_name, sanitize_filename,
 )
 from .scanner import DirectoryScanner, ScanCancelled
+
+
+SORT_ROLE = Qt.ItemDataRole.UserRole.value + 1
+
+
+class SortableTableWidgetItem(QTableWidgetItem):
+    """Table item that sorts with a raw numeric/text key instead of display text."""
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        left = self.data(SORT_ROLE)
+        right = other.data(SORT_ROLE)
+        if left is None or right is None:
+            return super().__lt__(other)
+        try:
+            return left < right
+        except TypeError:
+            return str(left).casefold() < str(right).casefold()
 
 
 def first_dropped_directory(urls: list[QUrl]) -> str | None:
@@ -255,6 +274,13 @@ class FileManagerDialog(QDialog):
     NAME_COLUMN = 1
     PATH_COLUMN = 2
     CATEGORY_COLUMN = 3
+    SIZE_COLUMN = 5
+    MODIFIED_COLUMN = 6
+    CREATED_COLUMN = 7
+    LINE_COUNT_COLUMN = 8
+    RESOLUTION_COLUMN = 12
+    DURATION_COLUMN = 13
+    FPS_COLUMN = 14
     FILTER_CATEGORIES = [
         ("image", "画像"), ("video", "動画"), ("audio", "音声"),
         ("document", "文書"), ("other", "その他"),
@@ -287,7 +313,7 @@ class FileManagerDialog(QDialog):
         self._mode = ""
         self._table_populating = False
         self._applied_categories: set[str] = set()
-        self._last_filter_signature: tuple[str, tuple[str, ...]] | None = None
+        self._last_filter_signature: tuple[str, int, tuple[str, ...]] | None = None
         self._last_check_row: int | None = None
         self._preview_from_plan = False
         self.media_duration = 0
@@ -400,8 +426,14 @@ class FileManagerDialog(QDialog):
         filters.addLayout(chip_row)
 
         action_row = QHBoxLayout()
+        self.column_filter_combo = QComboBox()
+        self.column_filter_combo.setToolTip("絞り込みの対象列を選びます")
+        self.column_filter_combo.addItem("すべての列", -1)
+        for column, label in enumerate(self.HEADERS[1:], start=1):
+            self.column_filter_combo.addItem(label, column)
+        self.column_filter_combo.currentIndexChanged.connect(self.apply_filter)
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("ファイル名・パスを検索")
+        self.search_edit.setPlaceholderText("選択した列を絞り込み（部分一致）")
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.textChanged.connect(self.apply_filter)
         self.csv_button = QPushButton("CSVレポート")
@@ -410,6 +442,7 @@ class FileManagerDialog(QDialog):
         self.json_button.setEnabled(False)
         self.csv_button.clicked.connect(lambda: self.save_report("csv"))
         self.json_button.clicked.connect(lambda: self.save_report("json"))
+        action_row.addWidget(self.column_filter_combo)
         action_row.addWidget(self.search_edit, 1)
         self.select_all_button = QPushButton("表示中を選択")
         self.clear_selection_button = QPushButton("選択解除")
@@ -426,6 +459,11 @@ class FileManagerDialog(QDialog):
         self.selection_count_label = QLabel("選択中 0件 ／ 表示中 0件")
         self.selection_count_label.setStyleSheet("font-weight:700;color:#2563eb")
         filters.addWidget(self.selection_count_label)
+        self.table_help_label = QLabel(
+            "列見出しをクリック：昇順／降順　｜　列見出し・一覧を右クリック：追加操作"
+        )
+        self.table_help_label.setStyleSheet("color:#64748b")
+        filters.addWidget(self.table_help_label)
         layout.addLayout(filters)
 
         self.table = QTableWidget(0, len(self.HEADERS))
@@ -444,6 +482,11 @@ class FileManagerDialog(QDialog):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setMinimumSectionSize(42)
         header.setStretchLastSection(False)
+        header.setSortIndicatorShown(True)
+        header.setSortIndicator(self.NAME_COLUMN, Qt.SortOrder.AscendingOrder)
+        header.setSectionsClickable(True)
+        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header.customContextMenuRequested.connect(self.show_header_context_menu)
         self.table.setColumnWidth(self.CHECK_COLUMN, 54)
         self.table.setColumnWidth(self.NAME_COLUMN, 280)
         self.table.setColumnWidth(self.PATH_COLUMN, 360)
@@ -452,6 +495,8 @@ class FileManagerDialog(QDialog):
         self.table.itemSelectionChanged.connect(self.update_preview)
         self.table.itemChanged.connect(self.on_table_item_changed)
         self.table.currentCellChanged.connect(lambda *_args: self.update_preview())
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_table_context_menu)
         self.table.viewport().installEventFilter(self)
         self.select_all_shortcut = QShortcut(QKeySequence.StandardKey.SelectAll, self.table)
         self.select_all_shortcut.activated.connect(lambda: self.set_visible_checks("all"))
@@ -752,7 +797,7 @@ class FileManagerDialog(QDialog):
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(self.details))
         for row, detail in enumerate(self.details):
-            check_item = QTableWidgetItem()
+            check_item = SortableTableWidgetItem()
             check_item.setCheckState(Qt.CheckState.Unchecked)
             check_item.setData(Qt.ItemDataRole.UserRole, detail.full_path)
             check_item.setFlags(
@@ -776,8 +821,9 @@ class FileManagerDialog(QDialog):
                 detail.sha256, detail.error,
             ]
             for column, value in enumerate(values, start=1):
-                item = QTableWidgetItem(str(value))
+                item = SortableTableWidgetItem(str(value))
                 item.setData(Qt.ItemDataRole.UserRole, detail.full_path)
+                item.setData(SORT_ROLE, self.sort_value_for_column(detail, column, str(value)))
                 item.setToolTip(detail.relative_path if column in {1, 2} else str(value))
                 self.table.setItem(row, column, item)
         self.table.setSortingEnabled(True)
@@ -818,18 +864,27 @@ class FileManagerDialog(QDialog):
         self.apply_filter()
 
     def clear_filters(self) -> None:
+        self.column_filter_combo.blockSignals(True)
+        self.column_filter_combo.setCurrentIndex(0)
+        self.column_filter_combo.blockSignals(False)
         self.search_edit.blockSignals(True)
         self.search_edit.clear()
         self.search_edit.blockSignals(False)
         self.select_all_filter_categories()
 
     def _matches_search(self, row: int, search: str) -> bool:
-        name_item = self.table.item(row, self.NAME_COLUMN)
-        path_item = self.table.item(row, self.PATH_COLUMN)
-        searchable = " ".join(
-            item.text().casefold() for item in (name_item, path_item) if item
+        if not search:
+            return True
+        selected_column = int(self.column_filter_combo.currentData())
+        columns = (
+            range(1, self.table.columnCount())
+            if selected_column < 0 else (selected_column,)
         )
-        return search in searchable
+        return any(
+            search in item.text().casefold()
+            for column in columns
+            if (item := self.table.item(row, column)) is not None
+        )
 
     def update_filter_counts(self, search: str) -> None:
         counts = {key: 0 for key, _label in self.FILTER_CATEGORIES}
@@ -852,7 +907,8 @@ class FileManagerDialog(QDialog):
         if not hasattr(self, "table"):
             return
         search = self.search_edit.text().casefold()
-        signature = (search, tuple(sorted(self._applied_categories)))
+        selected_column = int(self.column_filter_combo.currentData())
+        signature = (search, selected_column, tuple(sorted(self._applied_categories)))
         if self._last_filter_signature is not None and signature != self._last_filter_signature:
             self.reset_checked_selection()
         self._last_filter_signature = signature
@@ -865,6 +921,171 @@ class FileManagerDialog(QDialog):
                 visible = visible and bool(detail and detail.category in self._applied_categories)
             self.table.setRowHidden(row, not visible)
         self.update_selection_state()
+
+    @staticmethod
+    def sort_value_for_column(detail: FileDetail, column: int, display: str) -> int | float | str:
+        """Return a natural sort key for numeric/date/text table columns."""
+        numeric_values: dict[int, int | float] = {
+            FileManagerDialog.SIZE_COLUMN: detail.file_size,
+            FileManagerDialog.LINE_COUNT_COLUMN: detail.line_count if detail.line_count is not None else -1,
+            FileManagerDialog.RESOLUTION_COLUMN: (detail.width or 0) * (detail.height or 0),
+            FileManagerDialog.DURATION_COLUMN: detail.duration_seconds or 0.0,
+        }
+        if column in numeric_values:
+            return numeric_values[column]
+        if column == FileManagerDialog.FPS_COLUMN:
+            try:
+                return float(detail.frame_rate.casefold().replace("fps", "").strip() or 0)
+            except ValueError:
+                return 0.0
+        return display.casefold()
+
+    def show_header_context_menu(self, position) -> None:  # type: ignore[no-untyped-def]
+        header = self.table.horizontalHeader()
+        column = header.logicalIndexAt(position)
+        if column <= self.CHECK_COLUMN:
+            return
+        menu = QMenu(self)
+        ascending = menu.addAction(f"「{self.HEADERS[column]}」を昇順に並べ替え")
+        descending = menu.addAction(f"「{self.HEADERS[column]}」を降順に並べ替え")
+        menu.addSeparator()
+        filter_action = menu.addAction(f"「{self.HEADERS[column]}」を絞り込み…")
+        clear_action = menu.addAction("絞り込み条件をクリア")
+        menu.addSeparator()
+        fit_action = menu.addAction("この列の幅を内容に合わせる")
+        fit_all_action = menu.addAction("すべての列幅を内容に合わせる")
+        chosen = menu.exec(header.mapToGlobal(position))
+        if chosen == ascending:
+            self.table.sortItems(column, Qt.SortOrder.AscendingOrder)
+        elif chosen == descending:
+            self.table.sortItems(column, Qt.SortOrder.DescendingOrder)
+        elif chosen == filter_action:
+            self.prompt_column_filter(column)
+        elif chosen == clear_action:
+            self.clear_filters()
+        elif chosen == fit_action:
+            self.table.resizeColumnToContents(column)
+        elif chosen == fit_all_action:
+            self.table.resizeColumnsToContents()
+            self.table.setColumnWidth(self.CHECK_COLUMN, 54)
+
+    def prompt_column_filter(self, column: int) -> None:
+        text, accepted = QInputDialog.getText(
+            self,
+            "列の絞り込み",
+            f"「{self.HEADERS[column]}」に含まれる文字を入力してください。",
+            QLineEdit.EchoMode.Normal,
+            self.search_edit.text(),
+        )
+        if not accepted:
+            return
+        combo_index = self.column_filter_combo.findData(column)
+        self.column_filter_combo.setCurrentIndex(max(combo_index, 0))
+        self.search_edit.setText(text)
+        self.search_edit.setFocus()
+
+    def _context_rows(self) -> list[int]:
+        rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()})
+        if rows:
+            return rows
+        current = self.table.currentRow()
+        return [current] if current >= 0 else []
+
+    def show_table_context_menu(self, position) -> None:  # type: ignore[no-untyped-def]
+        index = self.table.indexAt(position)
+        if not index.isValid():
+            return
+        selected_rows = {item.row() for item in self.table.selectionModel().selectedRows()}
+        if index.row() not in selected_rows:
+            self.table.clearSelection()
+            self.table.selectRow(index.row())
+        current_index = self.table.model().index(
+            index.row(), max(index.column(), self.NAME_COLUMN)
+        )
+        self.table.selectionModel().setCurrentIndex(
+            current_index, QItemSelectionModel.SelectionFlag.NoUpdate
+        )
+
+        menu = QMenu(self)
+        open_action = menu.addAction("ファイルを開く")
+        folder_action = menu.addAction("保存場所を開く")
+        preview_action = menu.addAction("プレビューを表示")
+        menu.addSeparator()
+        check_action = menu.addAction("整理コピー対象に追加")
+        uncheck_action = menu.addAction("整理コピー対象から外す")
+        organize_action = menu.addAction("整理コピーで名前を変更…")
+        menu.addSeparator()
+        copy_menu = menu.addMenu("クリップボードへコピー")
+        copy_path_action = copy_menu.addAction("フルパス")
+        copy_name_action = copy_menu.addAction("ファイル名")
+        copy_folder_action = copy_menu.addAction("保存場所")
+        properties_action = menu.addAction("ファイル情報を表示")
+
+        chosen = menu.exec(self.table.viewport().mapToGlobal(position))
+        if chosen == open_action:
+            self.open_selected_file()
+        elif chosen == folder_action:
+            self.open_selected_folder()
+        elif chosen == preview_action:
+            self.update_preview(False)
+        elif chosen == check_action:
+            self.set_context_rows_checked(True)
+        elif chosen == uncheck_action:
+            self.set_context_rows_checked(False)
+        elif chosen == organize_action:
+            self.set_context_rows_checked(True)
+            self.tabs.setCurrentIndex(1)
+        elif chosen == copy_path_action:
+            self.copy_context_value("path")
+        elif chosen == copy_name_action:
+            self.copy_context_value("name")
+        elif chosen == copy_folder_action:
+            self.copy_context_value("folder")
+        elif chosen == properties_action:
+            self.show_selected_file_info()
+
+    def set_context_rows_checked(self, checked: bool) -> None:
+        self._table_populating = True
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        for row in self._context_rows():
+            item = self.table.item(row, self.CHECK_COLUMN)
+            if item:
+                item.setCheckState(state)
+        self._table_populating = False
+        self.update_selection_state()
+        self.update_preview()
+
+    def copy_context_value(self, kind: str) -> None:
+        values: list[str] = []
+        for row in self._context_rows():
+            item = self.table.item(row, self.NAME_COLUMN)
+            detail = self.detail_by_path.get(str(item.data(Qt.ItemDataRole.UserRole))) if item else None
+            if not detail:
+                continue
+            path = Path(detail.full_path)
+            values.append(
+                detail.name if kind == "name" else str(path.parent) if kind == "folder" else str(path)
+            )
+        if values:
+            QApplication.clipboard().setText("\n".join(values))
+            self.status_label.setText(f"{len(values):,}件をクリップボードへコピーしました")
+
+    def show_selected_file_info(self) -> None:
+        detail = self.focused_detail()
+        if not detail:
+            return
+        lines = [
+            f"ファイル名: {detail.name}",
+            f"保存場所: {Path(detail.full_path).parent}",
+            f"区分: {self.category_label(detail.category)}",
+            f"サイズ: {format_size(detail.file_size)} ({detail.file_size:,} bytes)",
+            f"更新日時: {detail.modified or '不明'}",
+            f"作成日時: {detail.created or '不明'}",
+            f"読取専用: {'はい' if detail.readonly else 'いいえ'}",
+        ]
+        if detail.resolution:
+            lines.append(f"解像度: {detail.resolution}")
+        QMessageBox.information(self, "ファイル情報", "\n".join(lines))
 
     def reset_checked_selection(self) -> None:
         if not hasattr(self, "table"):
@@ -1137,6 +1358,7 @@ class FileManagerDialog(QDialog):
                 item = self.table.item(row, column)
                 if item:
                     item.setText(value)
+                    item.setData(SORT_ROLE, self.sort_value_for_column(detail, column, value))
             self._table_populating = False
 
     def toggle_video(self) -> None:
