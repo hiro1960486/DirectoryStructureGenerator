@@ -25,7 +25,7 @@ from .models import ScanNode, ScanResult
 
 
 RASTER_EXTENSIONS = {
-    ".bmp", ".gif", ".heic", ".heif", ".jfif", ".jpeg", ".jpg", ".png",
+    ".bmp", ".gif", ".heic", ".heif", ".ico", ".jfif", ".jpeg", ".jpg", ".png",
     ".tif", ".tiff", ".webp",
 }
 IMAGE_EXTENSIONS = RASTER_EXTENSIONS | {".svg"}
