@@ -1,7 +1,7 @@
 """Modern PySide6 user interface.
 
-Version: 2.3.0
-Updated: 2026-09-21
+Version: 2.4.0
+Updated: 2026-09-22
 Author: hiro1960
 """
 
@@ -40,6 +40,8 @@ QPushButton:hover { background:#314866; } QPushButton:disabled { color:#718096; 
 QPushButton#primary { background:#2563eb; border-color:#3b82f6; color:white; }
 QPushButton#primary:hover { background:#1d4ed8; }
 QPushButton#danger { background:#7f1d1d; border-color:#b91c1c; }
+QPushButton#filterChip { border-radius:14px; padding:6px 12px; }
+QPushButton#filterChip:checked { background:#2563eb; border-color:#60a5fa; color:white; }
 QToolBar { background:#17243a; border-bottom:1px solid #263a59; spacing:8px; padding:4px; }
 QStatusBar { background:#17243a; } QProgressBar { border:1px solid #344966; border-radius:6px; text-align:center; background:#0d1421; }
 QProgressBar::chunk { background:#2563eb; border-radius:5px; } QSplitter::handle { background:#263a59; }
@@ -47,7 +49,7 @@ QTableWidget { background:#0d1421; alternate-background-color:#121d2d; border:1p
 QHeaderView::section { background:#17243a; color:#dbeafe; border:0; border-right:1px solid #2b3c56; padding:7px; font-weight:600; }
 QTabWidget::pane { border:1px solid #2b3c56; border-radius:8px; top:-1px; } QTabBar::tab { background:#17243a; padding:9px 16px; margin-right:3px; border-radius:7px; } QTabBar::tab:selected { background:#2563eb; color:white; }
 QFrame#previewCard { background:#17243a; border:1px solid #2b3c56; border-radius:12px; }
-QSlider::groove:horizontal { height:6px; background:#344966; border-radius:3px; } QSlider::handle:horizontal { width:16px; margin:-5px 0; background:#60a5fa; border-radius:8px; }
+QSlider::groove:horizontal { height:10px; background:#344966; border-radius:5px; } QSlider::handle:horizontal { width:22px; margin:-7px 0; background:#60a5fa; border:2px solid #dbeafe; border-radius:11px; }
 """
 
 LIGHT_STYLE = """
@@ -62,6 +64,8 @@ QPushButton { background:#edf2f8; border:1px solid #c8d4e4; border-radius:8px; p
 QPushButton:hover { background:#e1eaf5; } QPushButton:disabled { color:#94a3b8; }
 QPushButton#primary { background:#2563eb; border-color:#2563eb; color:white; } QPushButton#primary:hover { background:#1d4ed8; }
 QPushButton#danger { background:#fee2e2; border-color:#fca5a5; color:#991b1b; }
+QPushButton#filterChip { border-radius:14px; padding:6px 12px; background:white; }
+QPushButton#filterChip:checked { background:#2563eb; border-color:#2563eb; color:white; }
 QToolBar { background:white; border-bottom:1px solid #dbe4f0; spacing:8px; padding:4px; }
 QStatusBar { background:white; } QProgressBar { border:1px solid #c9d4e3; border-radius:6px; text-align:center; background:white; }
 QProgressBar::chunk { background:#2563eb; border-radius:5px; } QSplitter::handle { background:#d5deea; }
@@ -69,7 +73,7 @@ QTableWidget { background:white; alternate-background-color:#f6f9fd; border:1px 
 QHeaderView::section { background:#edf2f8; color:#172033; border:0; border-right:1px solid #d5deea; padding:7px; font-weight:600; }
 QTabWidget::pane { border:1px solid #d5deea; border-radius:8px; top:-1px; } QTabBar::tab { background:#e8eef6; padding:9px 16px; margin-right:3px; border-radius:7px; } QTabBar::tab:selected { background:#2563eb; color:white; }
 QFrame#previewCard { background:white; border:1px solid #d5deea; border-radius:12px; }
-QSlider::groove:horizontal { height:6px; background:#cbd5e1; border-radius:3px; } QSlider::handle:horizontal { width:16px; margin:-5px 0; background:#2563eb; border-radius:8px; }
+QSlider::groove:horizontal { height:10px; background:#cbd5e1; border-radius:5px; } QSlider::handle:horizontal { width:22px; margin:-7px 0; background:#2563eb; border:2px solid #1e40af; border-radius:11px; }
 """
 
 

@@ -7,7 +7,8 @@ from pathlib import Path
 from PIL import Image
 
 from dsg_app.file_inspector import (
-    FileDetail, export_details_csv, export_details_json, inspect_scan_result,
+    FileDetail, category_for_extension, export_details_csv, export_details_json,
+    inspect_scan_result,
 )
 from dsg_app.models import FilterSettings
 from dsg_app.scanner import DirectoryScanner
@@ -25,6 +26,7 @@ class FileInspectorTests(unittest.TestCase):
     def test_general_image_and_svg_metadata(self):
         (self.root / "code.py").write_text("one\ntwo\nthree", encoding="utf-8")
         Image.new("RGBA", (640, 480), "blue").save(self.root / "image.png")
+        Image.new("RGBA", (64, 64), "green").save(self.root / "icon.ico")
         (self.root / "vector.svg").write_text(
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080"></svg>',
             encoding="utf-8",
@@ -39,6 +41,8 @@ class FileInspectorTests(unittest.TestCase):
         self.assertEqual(by_name["image.png"].resolution, "640 × 480")
         self.assertEqual(by_name["image.png"].aspect_ratio, "4:3")
         self.assertEqual(by_name["image.png"].color_mode, "RGBA")
+        self.assertEqual(by_name["icon.ico"].resolution, "64 × 64")
+        self.assertEqual(by_name["icon.ico"].image_format, "ICO")
         self.assertEqual(by_name["vector.svg"].resolution, "1920 × 1080")
         self.assertEqual(by_name["vector.svg"].image_format, "SVG")
 
@@ -69,6 +73,27 @@ class FileInspectorTests(unittest.TestCase):
         self.assertEqual(detail.media_format, "MP4")
         self.assertEqual(detail.resolution, "1920 × 1080")
         self.assertEqual(detail.duration, "01:05")
+
+    def test_filter_categories_cover_media_documents_and_other_files(self):
+        self.assertEqual(category_for_extension(".heic"), "image")
+        self.assertEqual(category_for_extension(".ico"), "image")
+        self.assertEqual(category_for_extension(".mkv"), "video")
+        self.assertEqual(category_for_extension(".flac"), "audio")
+        self.assertEqual(category_for_extension(".pdf"), "document")
+        self.assertEqual(category_for_extension(".py"), "other")
+
+    def test_audio_display_fields(self):
+        detail = FileDetail(
+            name="sample.flac", relative_path="media/sample.flac", full_path="sample.flac",
+            category="audio", extension=".flac", file_size=100, modified="", created="",
+            permissions="-rw-r--r--", readonly=False, audio_format="FLAC",
+            duration_seconds=125.2, audio_codec="FLAC",
+        )
+
+        self.assertTrue(detail.is_audio)
+        self.assertTrue(detail.is_media)
+        self.assertEqual(detail.media_format, "FLAC")
+        self.assertEqual(detail.duration, "02:05")
 
 
 if __name__ == "__main__":

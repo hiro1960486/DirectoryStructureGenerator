@@ -1,7 +1,7 @@
-"""Read-only metadata inspection for general files, images, and videos.
+"""Read-only metadata inspection for general files and media.
 
-Version: 2.3.0
-Updated: 2026-09-21
+Version: 2.4.0
+Updated: 2026-09-22
 Author: hiro1960
 """
 
@@ -25,12 +25,22 @@ from .models import ScanNode, ScanResult
 
 
 RASTER_EXTENSIONS = {
-    ".bmp", ".gif", ".jfif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp",
+    ".bmp", ".gif", ".heic", ".heif", ".ico", ".jfif", ".jpeg", ".jpg", ".png",
+    ".tif", ".tiff", ".webp",
 }
 IMAGE_EXTENSIONS = RASTER_EXTENSIONS | {".svg"}
 VIDEO_EXTENSIONS = {
     ".3gp", ".avi", ".flv", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4",
     ".mpeg", ".mpg", ".mts", ".ogv", ".ts", ".webm", ".wmv",
+}
+AUDIO_EXTENSIONS = {
+    ".aac", ".aiff", ".alac", ".flac", ".m4a", ".mp3", ".oga", ".ogg",
+    ".opus", ".wav", ".wma",
+}
+DOCUMENT_EXTENSIONS = {
+    ".csv", ".doc", ".docx", ".epub", ".htm", ".html", ".md", ".odf",
+    ".ods", ".odt", ".pdf", ".ppt", ".pptx", ".rtf", ".tex", ".txt",
+    ".xls", ".xlsx",
 }
 TEXT_EXTENSIONS = {
     ".bat", ".c", ".cc", ".cfg", ".conf", ".cpp", ".cs", ".css", ".csv",
@@ -61,6 +71,7 @@ class FileDetail:
     sha256: str = ""
     image_format: str = ""
     video_format: str = ""
+    audio_format: str = ""
     width: int | None = None
     height: int | None = None
     aspect_ratio: str = ""
@@ -91,8 +102,20 @@ class FileDetail:
         return self.category == "video"
 
     @property
+    def is_audio(self) -> bool:
+        return self.category == "audio"
+
+    @property
+    def is_document(self) -> bool:
+        return self.category == "document"
+
+    @property
+    def is_media(self) -> bool:
+        return self.category in {"image", "video", "audio"}
+
+    @property
     def media_format(self) -> str:
-        return self.image_format or self.video_format
+        return self.image_format or self.video_format or self.audio_format
 
     @property
     def duration(self) -> str:
@@ -296,6 +319,72 @@ def _video_metadata(path: Path) -> dict[str, object]:
             pass
 
 
+def _audio_metadata(path: Path) -> dict[str, object]:
+    """Read common audio metadata without decoding the full media stream."""
+    try:
+        from hachoir.metadata import extractMetadata
+        from hachoir.parser import createParser
+    except ImportError as exc:  # pragma: no cover - dependency is installed in releases
+        raise ValueError("音声情報ライブラリがありません") from exc
+
+    parser = createParser(str(path))
+    if parser is None:
+        raise ValueError("音声形式を解析できません")
+    try:
+        metadata = extractMetadata(parser)
+        if metadata is None:
+            raise ValueError("音声情報を取得できません")
+
+        def value(group, key: str):  # type: ignore[no-untyped-def]
+            try:
+                return group.get(key)
+            except (AttributeError, KeyError, LookupError, TypeError, ValueError):
+                return None
+
+        duration_value = value(metadata, "duration")
+        duration_seconds = (
+            float(duration_value.total_seconds())
+            if hasattr(duration_value, "total_seconds") else None
+        )
+        codec = str(value(metadata, "compression") or value(metadata, "codec") or "")
+        channels = str(value(metadata, "channel") or value(metadata, "channels") or "")
+        bit_rate = value(metadata, "bit_rate")
+        calculated_bit_rate = (
+            path.stat().st_size * 8 / duration_seconds
+            if duration_seconds and duration_seconds > 0 else None
+        )
+        return {
+            "audio_format": path.suffix.lstrip(".").upper(),
+            "duration_seconds": duration_seconds,
+            "audio_codec": codec,
+            "bit_rate": (
+                f"{int(bit_rate) / 1_000:.0f} kbps" if bit_rate
+                else f"{calculated_bit_rate / 1_000:.0f} kbps" if calculated_bit_rate
+                else ""
+            ),
+            "audio_channels": channels,
+        }
+    finally:
+        try:
+            parser.close()
+        except AttributeError:
+            pass
+
+
+def category_for_extension(extension: str) -> str:
+    """Map a file extension to the filter category shown in the UI."""
+    suffix = extension.casefold()
+    if suffix in IMAGE_EXTENSIONS:
+        return "image"
+    if suffix in VIDEO_EXTENSIONS:
+        return "video"
+    if suffix in AUDIO_EXTENSIONS:
+        return "audio"
+    if suffix in DOCUMENT_EXTENSIONS:
+        return "document"
+    return "other"
+
+
 def inspect_file(
     node: ScanNode,
     include_lines: bool,
@@ -306,9 +395,10 @@ def inspect_file(
     path = node.path
     file_stat = path.stat()
     suffix = path.suffix.casefold()
-    is_image = suffix in IMAGE_EXTENSIONS
-    is_video = suffix in VIDEO_EXTENSIONS
-    category = "image" if is_image else "video" if is_video else "general"
+    category = category_for_extension(suffix)
+    is_image = category == "image"
+    is_video = category == "video"
+    is_audio = category == "audio"
     detail = FileDetail(
         name=path.name,
         relative_path=node.relative_path.as_posix(),
@@ -346,6 +436,13 @@ def inspect_file(
                 setattr(detail, key, value)
         except (OSError, ValueError) as exc:
             errors.append(f"動画: {exc}")
+    elif is_audio:
+        try:
+            values = _audio_metadata(path)
+            for key, value in values.items():
+                setattr(detail, key, value)
+        except (OSError, ValueError) as exc:
+            errors.append(f"音声: {exc}")
     detail.error = "; ".join(errors)
     return detail
 
@@ -378,11 +475,7 @@ def inspect_scan_result(
                     name=node.name,
                     relative_path=node.relative_path.as_posix(),
                     full_path=str(node.path),
-                    category=(
-                        "image" if node.path.suffix.casefold() in IMAGE_EXTENSIONS
-                        else "video" if node.path.suffix.casefold() in VIDEO_EXTENSIONS
-                        else "general"
-                    ),
+                    category=category_for_extension(node.path.suffix.casefold()),
                     extension=node.path.suffix.casefold(),
                     file_size=node.size,
                     modified="",

@@ -1,7 +1,7 @@
 """Non-destructive file organization by copying to a chosen destination.
 
-Version: 2.3.0
-Updated: 2026-09-21
+Version: 2.4.0
+Updated: 2026-09-22
 Author: hiro1960
 """
 
