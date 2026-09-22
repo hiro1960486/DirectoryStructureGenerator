@@ -36,13 +36,13 @@ jobs:
           Copy-Item README.md "dist/DirectoryStructureGeneratorGUI/README.md"
           Compress-Archive `
             -Path "dist/DirectoryStructureGeneratorGUI/*" `
-            -DestinationPath "DirectoryStructureGeneratorGUI_Ver2.4.0_TestBuild_Windows_x64.zip" `
+            -DestinationPath "DirectoryStructureGeneratorGUI_Ver2.5.0_TestBuild_Windows_x64.zip" `
             -Force
 
       - name: Upload test build
         uses: actions/upload-artifact@v4
         with:
-          name: DirectoryStructureGeneratorGUI-Ver2.4.0-TestBuild-Windows-x64
-          path: DirectoryStructureGeneratorGUI_Ver2.4.0_TestBuild_Windows_x64.zip
+          name: DirectoryStructureGeneratorGUI-Ver2.5.0-TestBuild-Windows-x64
+          path: DirectoryStructureGeneratorGUI_Ver2.5.0_TestBuild_Windows_x64.zip
           if-no-files-found: error
           retention-days: 14

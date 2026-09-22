@@ -1,9 +1,13 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from dsg_app.file_inspector import FileDetail
-from dsg_app.organizer import CopyCancelled, build_copy_plans, execute_copy_plans, sanitize_filename
+from dsg_app.organizer import (
+    CopyCancelled, build_copy_plans, execute_copy_plans, extension_was_changed,
+    sanitize_filename,
+)
 
 
 def detail(path: Path, relative: str) -> FileDetail:
@@ -48,6 +52,69 @@ class OrganizerTests(unittest.TestCase):
         self.assertEqual(copied.read_text(encoding="utf-8"), "original data")
         self.assertEqual(results[0].status, "コピー完了")
         self.assertTrue((self.destination / "_DirectoryStructureGenerator_copy_log.csv").exists())
+
+    def test_delete_source_only_after_verified_copy(self):
+        original = self.source / "docs" / "move.txt"
+        original.write_text("verified data", encoding="utf-8")
+        plans = build_copy_plans(
+            [detail(original, "docs/move.txt")], self.destination,
+            "moved.txt", keep_subfolders=False, collision="number",
+        )
+
+        results = execute_copy_plans(plans, self.destination, delete_sources=True)
+
+        copied = self.destination / "moved.txt"
+        self.assertFalse(original.exists())
+        self.assertEqual(copied.read_text(encoding="utf-8"), "verified data")
+        self.assertEqual(results[0].status, "コピー完了・元ファイル削除")
+
+    def test_size_mismatch_keeps_source(self):
+        original = self.source / "docs" / "important.txt"
+        original.write_text("do not delete", encoding="utf-8")
+        plans = build_copy_plans(
+            [detail(original, "docs/important.txt")], self.destination,
+            "copy.txt", keep_subfolders=False, collision="number",
+        )
+
+        def bad_copy(_source: Path, destination: Path) -> None:
+            destination.write_text("x", encoding="utf-8")
+
+        with patch("dsg_app.organizer.shutil.copy2", side_effect=bad_copy):
+            results = execute_copy_plans(plans, self.destination, delete_sources=True)
+
+        self.assertTrue(original.exists())
+        self.assertEqual(results[0].status, "コピー完了・安全確認失敗")
+        self.assertIn("サイズが一致しない", results[0].error)
+
+    def test_skipped_file_is_never_deleted(self):
+        original = self.source / "docs" / "same.txt"
+        original.write_text("source", encoding="utf-8")
+        self.destination.mkdir()
+        (self.destination / "same.txt").write_text("existing", encoding="utf-8")
+        plans = build_copy_plans(
+            [detail(original, "docs/same.txt")], self.destination,
+            "{name}", keep_subfolders=False, collision="skip",
+        )
+
+        execute_copy_plans(plans, self.destination, delete_sources=True)
+
+        self.assertTrue(original.exists())
+        self.assertEqual(plans[0].status, "既存のためスキップ")
+
+    def test_extension_change_is_detected_case_insensitively(self):
+        original = self.source / "docs" / "photo.PNG"
+        original.write_text("image bytes", encoding="utf-8")
+        changed = build_copy_plans(
+            [detail(original, "docs/photo.PNG")], self.destination,
+            "photo.jpg", keep_subfolders=False, collision="number",
+        )[0]
+        same = build_copy_plans(
+            [detail(original, "docs/photo.PNG")], self.destination,
+            "renamed.png", keep_subfolders=False, collision="number",
+        )[0]
+
+        self.assertTrue(extension_was_changed(changed))
+        self.assertFalse(extension_was_changed(same))
 
     def test_collision_adds_number(self):
         original = self.source / "docs" / "same.txt"

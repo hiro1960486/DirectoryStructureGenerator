@@ -1,6 +1,6 @@
 """Read-only metadata inspection for general files and media.
 
-Version: 2.4.0
+Version: 2.5.0
 Updated: 2026-09-22
 Author: hiro1960
 """
