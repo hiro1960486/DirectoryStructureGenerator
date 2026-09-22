@@ -1,6 +1,6 @@
 """Modern PySide6 user interface.
 
-Version: 2.6.0
+Version: 2.7.0
 Updated: 2026-09-22
 Author: hiro1960
 """
@@ -23,6 +23,8 @@ from .config_manager import add_history, load_config, save_config
 from .exporters import export_selected, format_size, tree_lines
 from .file_manager_dialog import FileManagerDialog, OrganizerSettingsDialog
 from .models import FilterSettings, PRESETS, ScanResult
+from .preset_dialog import PresetManagerDialog
+from .settings_presets import builtin_presets, normalize_presets
 from .scanner import DirectoryScanner, ScanCancelled
 from .version import APP_NAME, APP_VERSION, AUTHOR, UPDATED
 
@@ -168,6 +170,9 @@ class MainWindow(QMainWindow):
         organizer_settings = QAction("⚙ 整理コピー設定", self)
         organizer_settings.triggered.connect(self.show_organizer_settings)
         toolbar.addAction(organizer_settings)
+        preset_settings = QAction("★ プリセット管理", self)
+        preset_settings.triggered.connect(self.show_preset_manager)
+        toolbar.addAction(preset_settings)
 
         root = QWidget()
         outer = QVBoxLayout(root)
@@ -189,6 +194,40 @@ class MainWindow(QMainWindow):
         badge.setStyleSheet("background:#2563eb;color:white;border-radius:12px;padding:6px 12px;font-weight:700")
         hero_layout.addWidget(badge)
         outer.addWidget(hero)
+
+        preset_group = QGroupBox("設定プリセット")
+        preset_layout = QVBoxLayout(preset_group)
+        preset_top = QHBoxLayout()
+        self.settings_preset_combo = QComboBox()
+        self.settings_preset_combo.setToolTip("保存済みの設定セットを選びます")
+        apply_settings_preset = QPushButton("適用")
+        manage_settings_presets = QPushButton("管理…")
+        apply_settings_preset.clicked.connect(
+            lambda: self.apply_settings_preset(self.settings_preset_combo.currentText())
+        )
+        manage_settings_presets.clicked.connect(self.show_preset_manager)
+        preset_top.addWidget(QLabel("プリセット"))
+        preset_top.addWidget(self.settings_preset_combo, 1)
+        preset_top.addWidget(apply_settings_preset)
+        preset_top.addWidget(manage_settings_presets)
+        preset_layout.addLayout(preset_top)
+        favorites = QHBoxLayout()
+        favorites.addWidget(QLabel("常用"))
+        self.favorite_preset_buttons: list[QPushButton] = []
+        for _ in range(5):
+            button = QPushButton()
+            button.setObjectName("filterChip")
+            button.setVisible(False)
+            button.clicked.connect(
+                lambda _checked=False, target=button: self.apply_settings_preset(
+                    str(target.property("presetName") or "")
+                )
+            )
+            self.favorite_preset_buttons.append(button)
+            favorites.addWidget(button)
+        favorites.addStretch()
+        preset_layout.addLayout(favorites)
+        outer.addWidget(preset_group)
 
         paths = QGroupBox("1. フォルダーを選ぶ")
         grid = QGridLayout(paths)
@@ -242,7 +281,7 @@ class MainWindow(QMainWindow):
         self.max_depth = QSpinBox()
         self.max_depth.setRange(-1, 999)
         self.max_depth.setSpecialValueText("制限なし")
-        filter_layout.addRow("プリセット", self.preset_combo)
+        filter_layout.addRow("クイックフィルター", self.preset_combo)
         filter_layout.addRow("除外フォルダー\n（1行に1つ）", self.excluded_dirs)
         filter_layout.addRow("除外拡張子", self.excluded_exts)
         filter_layout.addRow("対象拡張子", self.included_exts)
@@ -453,6 +492,7 @@ class MainWindow(QMainWindow):
         self._set_filter_ui(FilterSettings.from_dict(self.config.get("filters")))
         for key, checkbox in self.format_checks.items():
             checkbox.setChecked(bool(self.config.get("formats", {}).get(key, key != "json")))
+        self.refresh_settings_presets()
 
     def _set_filter_ui(self, settings: FilterSettings) -> None:
         self.excluded_dirs.setPlainText("\n".join(settings.excluded_dirs))
@@ -489,6 +529,99 @@ class MainWindow(QMainWindow):
         current.patterns = list(preset["patterns"])
         current.include_hidden = bool(preset["include_hidden"])
         self._set_filter_ui(current)
+
+    def settings_presets(self) -> list[dict[str, object]]:
+        values = self.config.get("settings_presets", builtin_presets())
+        if not isinstance(values, list):
+            values = builtin_presets()
+        return normalize_presets(item for item in values if isinstance(item, dict))
+
+    def refresh_settings_presets(self) -> None:
+        presets = self.settings_presets()
+        self.config["settings_presets"] = presets
+        current = str(self.config.get("active_settings_preset", ""))
+        self.settings_preset_combo.blockSignals(True)
+        self.settings_preset_combo.clear()
+        self.settings_preset_combo.addItems([str(item["name"]) for item in presets])
+        if current:
+            self.settings_preset_combo.setCurrentText(current)
+        self.settings_preset_combo.blockSignals(False)
+        favorites = [item for item in presets if item.get("favorite")][:5]
+        for index, button in enumerate(self.favorite_preset_buttons):
+            if index < len(favorites):
+                name = str(favorites[index]["name"])
+                button.setText("★ " + name)
+                button.setProperty("presetName", name)
+                button.setToolTip(str(favorites[index].get("memo", "")))
+                button.setVisible(True)
+            else:
+                button.setVisible(False)
+
+    def current_settings_snapshot(self) -> dict[str, object]:
+        return {
+            "source": self.source_combo.currentText().strip(),
+            "output": self.output_combo.currentText().strip(),
+            "filters": self.current_filters().to_dict(),
+            "formats": {key: checkbox.isChecked() for key, checkbox in self.format_checks.items()},
+            "organizer": dict(self.config.get("organizer", {})),
+        }
+
+    @Slot(str)
+    def apply_settings_preset(self, name: str) -> None:
+        preset = next((item for item in self.settings_presets() if item["name"] == name), None)
+        if not preset:
+            return
+        source = str(preset.get("source", "")).strip()
+        output = str(preset.get("output", "")).strip()
+        missing_source = False
+        if source and Path(source).is_dir():
+            self.source_combo.setCurrentText(source)
+        elif source:
+            missing_source = True
+        if output:
+            self.output_combo.setCurrentText(output)
+        self._set_filter_ui(FilterSettings.from_dict(preset.get("filters")))
+        formats = preset.get("formats", {})
+        if isinstance(formats, dict):
+            for key, checkbox in self.format_checks.items():
+                if key in formats:
+                    checkbox.setChecked(bool(formats[key]))
+        organizer = preset.get("organizer", {})
+        if isinstance(organizer, dict):
+            self.config["organizer"] = dict(organizer)
+        self.config["active_settings_preset"] = name
+        self.settings_preset_combo.setCurrentText(name)
+        self._save_ui_config()
+        memo = str(preset.get("memo", "")).strip()
+        message = f"プリセット「{name}」を適用しました"
+        if memo:
+            message += f" — {memo}"
+        self.statusBar().showMessage(message, 6000)
+        if missing_source:
+            QMessageBox.warning(
+                self, "プリセットの対象フォルダー",
+                "保存されていた対象フォルダーが見つかりません。\n"
+                "他の設定は適用しました。対象フォルダーを選び直してください。",
+            )
+
+    def show_preset_manager(self) -> None:
+        dialog = PresetManagerDialog(self.settings_presets(), self.current_settings_snapshot, self)
+        dialog.presetsChanged.connect(self.update_settings_presets)
+        dialog.presetApplied.connect(lambda value: self.apply_settings_preset(str(value.get("name", ""))))
+        dialog.exec()
+
+    @Slot(object)
+    def update_settings_presets(self, values: object) -> None:
+        if not isinstance(values, list):
+            return
+        self.config["settings_presets"] = normalize_presets(
+            item for item in values if isinstance(item, dict)
+        )
+        self.refresh_settings_presets()
+        try:
+            save_config(self.config)
+        except OSError as exc:
+            QMessageBox.critical(self, "プリセット保存エラー", str(exc))
 
     def choose_source(self) -> None:
         path = self._choose_directory("対象フォルダーを選択", self.source_combo.currentText())
