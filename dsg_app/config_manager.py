@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import FilterSettings
+from .settings_presets import builtin_presets, normalize_presets
 from .version import APP_VERSION
 
 
@@ -18,7 +19,7 @@ def config_path() -> Path:
 
 def default_config() -> dict[str, Any]:
     return {
-        "config_version": 2, "app_version": APP_VERSION, "theme": "dark",
+        "config_version": 3, "app_version": APP_VERSION, "theme": "dark",
         "source": "", "output": "", "source_history": [], "output_history": [],
         "organizer_destinations": [],
         "organizer": {
@@ -28,6 +29,7 @@ def default_config() -> dict[str, Any]:
         },
         "formats": {"txt": True, "html": True, "csv": True, "json": False},
         "filters": FilterSettings().to_dict(), "preset": "開発用おすすめ",
+        "settings_presets": builtin_presets(), "active_settings_preset": "",
         "window": {"width": 1240, "height": 820},
     }
 
@@ -45,6 +47,13 @@ def load_config() -> dict[str, Any]:
                     defaults[key] = value
     except (OSError, ValueError, TypeError):
         pass
+    try:
+        values = defaults.get("settings_presets", builtin_presets())
+        defaults["settings_presets"] = normalize_presets(
+            item for item in values if isinstance(item, dict)
+        ) if isinstance(values, list) else builtin_presets()
+    except (ValueError, TypeError):
+        defaults["settings_presets"] = builtin_presets()
     return defaults
 
 
