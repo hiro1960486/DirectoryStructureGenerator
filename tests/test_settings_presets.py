@@ -14,6 +14,8 @@ class SettingsPresetTests(unittest.TestCase):
         self.assertEqual(len(presets), 6)
         self.assertTrue(all(item["memo"] for item in presets))
         self.assertEqual(sum(bool(item["favorite"]) for item in presets), MAX_FAVORITES)
+        self.assertEqual(sum(bool(item["default"]) for item in presets), 1)
+        self.assertEqual(sum(bool(item["quick"]) for item in presets), MAX_FAVORITES)
 
     def test_normalize_limits_favorites_to_five(self) -> None:
         presets = builtin_presets()
@@ -21,6 +23,22 @@ class SettingsPresetTests(unittest.TestCase):
             item["favorite"] = True
         normalized = normalize_presets(presets)
         self.assertEqual(sum(bool(item["favorite"]) for item in normalized), MAX_FAVORITES)
+
+    def test_default_is_always_quick_and_only_one_default_exists(self) -> None:
+        presets = builtin_presets()
+        presets[0]["default"] = False
+        presets[-1]["default"] = True
+        presets[-1]["quick"] = False
+        normalized = normalize_presets(presets)
+        defaults = [item for item in normalized if item["default"]]
+        self.assertEqual(len(defaults), 1)
+        self.assertTrue(defaults[0]["quick"])
+
+    def test_filter_lists_are_deduplicated_case_insensitively(self) -> None:
+        preset = builtin_presets()[0]
+        preset["filters"]["excluded_dirs"] = [".Trash", ".trash", " .git ", ".git"]
+        normalized = normalize_presets([preset])
+        self.assertEqual(normalized[0]["filters"]["excluded_dirs"], [".Trash", ".git"])
 
     def test_csv_round_trip_preserves_memo_and_safe_organizer(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -32,6 +50,8 @@ class SettingsPresetTests(unittest.TestCase):
             loaded = import_presets_csv(path)
         self.assertEqual(loaded[0]["memo"], preset["memo"])
         self.assertNotIn("source_action", loaded[0]["organizer"])
+        self.assertTrue(loaded[0]["default"])
+        self.assertEqual(loaded[0]["order"], 1)
 
     def test_import_rejects_missing_columns(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
