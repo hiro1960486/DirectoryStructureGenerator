@@ -26,6 +26,7 @@ class FileInspectorTests(unittest.TestCase):
     def test_general_image_and_svg_metadata(self):
         (self.root / "code.py").write_text("one\ntwo\nthree", encoding="utf-8")
         Image.new("RGBA", (640, 480), "blue").save(self.root / "image.png")
+        Image.new("RGBA", (64, 64), "green").save(self.root / "icon.ico")
         (self.root / "vector.svg").write_text(
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080"></svg>',
             encoding="utf-8",
@@ -40,6 +41,8 @@ class FileInspectorTests(unittest.TestCase):
         self.assertEqual(by_name["image.png"].resolution, "640 × 480")
         self.assertEqual(by_name["image.png"].aspect_ratio, "4:3")
         self.assertEqual(by_name["image.png"].color_mode, "RGBA")
+        self.assertEqual(by_name["icon.ico"].resolution, "64 × 64")
+        self.assertEqual(by_name["icon.ico"].image_format, "ICO")
         self.assertEqual(by_name["vector.svg"].resolution, "1920 × 1080")
         self.assertEqual(by_name["vector.svg"].image_format, "SVG")
 
@@ -73,6 +76,7 @@ class FileInspectorTests(unittest.TestCase):
 
     def test_filter_categories_cover_media_documents_and_other_files(self):
         self.assertEqual(category_for_extension(".heic"), "image")
+        self.assertEqual(category_for_extension(".ico"), "image")
         self.assertEqual(category_for_extension(".mkv"), "video")
         self.assertEqual(category_for_extension(".flac"), "audio")
         self.assertEqual(category_for_extension(".pdf"), "document")
