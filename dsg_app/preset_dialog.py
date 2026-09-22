@@ -8,7 +8,7 @@ from typing import Any, Callable
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView,
-    QInputDialog, QLabel, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
+    QInputDialog, QLabel, QMessageBox, QPushButton, QRadioButton, QSpinBox, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -40,35 +40,36 @@ class PresetManagerDialog(QDialog):
         title.setStyleSheet("font-size:17pt;font-weight:700")
         layout.addWidget(title)
         layout.addWidget(QLabel(
-            f"常用は最大{MAX_FAVORITES}件です。メモには用途や対象フォルダーを記録できます。"
+            f"基本は1件、クイック表示は基本を含め最大{MAX_FAVORITES}件です。"
         ))
 
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["常用", "プリセット名", "メモ", "種類"])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["基本", "クイック", "順番", "プリセット名", "メモ", "種類"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        for column in (0, 1, 2, 3, 5):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table, 1)
 
         actions = QHBoxLayout()
         add_button = QPushButton("現在の設定を追加")
+        update_button = QPushButton("現在の設定で更新")
         edit_button = QPushButton("名前・メモを編集")
         duplicate_button = QPushButton("複製")
         delete_button = QPushButton("削除")
         apply_button = QPushButton("選択した設定を適用")
         apply_button.setObjectName("primary")
         add_button.clicked.connect(self.add_current)
+        update_button.clicked.connect(self.update_selected)
         edit_button.clicked.connect(self.edit_selected)
         duplicate_button.clicked.connect(self.duplicate_selected)
         delete_button.clicked.connect(self.delete_selected)
         apply_button.clicked.connect(self.apply_selected)
-        for button in (add_button, edit_button, duplicate_button, delete_button):
+        for button in (add_button, update_button, edit_button, duplicate_button, delete_button):
             actions.addWidget(button)
         actions.addStretch()
         actions.addWidget(apply_button)
@@ -93,24 +94,56 @@ class PresetManagerDialog(QDialog):
         self.table.setRowCount(len(self.presets))
         selected_row = 0
         for row, preset in enumerate(self.presets):
-            check = QCheckBox()
-            check.setChecked(bool(preset.get("favorite", False)))
-            check.setToolTip("常用プリセットとして上部に表示します（最大5件）")
-            check.stateChanged.connect(lambda state, index=row: self.toggle_favorite(index, state))
-            holder = QWidget()
-            holder.setLayout(QHBoxLayout())
-            holder.layout().setContentsMargins(8, 0, 8, 0)
-            holder.layout().setAlignment(Qt.AlignmentFlag.AlignCenter)
-            holder.layout().addWidget(check)
-            self.table.setCellWidget(row, 0, holder)
-            self.table.setItem(row, 1, QTableWidgetItem(str(preset["name"])))
-            self.table.setItem(row, 2, QTableWidgetItem(str(preset.get("memo", ""))))
-            self.table.setItem(row, 3, QTableWidgetItem("標準" if preset.get("builtin") else "ユーザー"))
+            default = QRadioButton()
+            default.setChecked(bool(preset.get("default", False)))
+            default.setToolTip("アプリ起動時に使う基本プリセット（1件）")
+            default.clicked.connect(lambda _checked=False, index=row: self.set_default(index))
+            self.table.setCellWidget(row, 0, self._centered(default))
+            quick = QCheckBox()
+            quick.setChecked(bool(preset.get("quick", preset.get("favorite", False))))
+            quick.setToolTip(f"メイン画面に表示します（最大{MAX_FAVORITES}件）")
+            quick.stateChanged.connect(lambda state, index=row: self.toggle_favorite(index, state))
+            self.table.setCellWidget(row, 1, self._centered(quick))
+            order = QSpinBox()
+            order.setRange(1, 99)
+            order.setValue(int(preset.get("order", row + 1)))
+            order.editingFinished.connect(lambda index=row, widget=order: self.set_order(index, widget.value()))
+            self.table.setCellWidget(row, 2, order)
+            self.table.setItem(row, 3, QTableWidgetItem(str(preset["name"])))
+            self.table.setItem(row, 4, QTableWidgetItem(str(preset.get("memo", ""))))
+            self.table.setItem(row, 5, QTableWidgetItem("標準" if preset.get("builtin") else "ユーザー"))
             if preset["name"] == selected_name:
                 selected_row = row
         if self.presets:
             self.table.selectRow(selected_row)
         self._updating = False
+
+    @staticmethod
+    def _centered(widget: QWidget) -> QWidget:
+        holder = QWidget()
+        holder.setLayout(QHBoxLayout())
+        holder.layout().setContentsMargins(8, 0, 8, 0)
+        holder.layout().setAlignment(Qt.AlignmentFlag.AlignCenter)
+        holder.layout().addWidget(widget)
+        return holder
+
+    def set_default(self, index: int) -> None:
+        if self._updating or not (0 <= index < len(self.presets)):
+            return
+        for row, item in enumerate(self.presets):
+            item["default"] = row == index
+        self.presets[index]["quick"] = True
+        self.presets[index]["favorite"] = True
+        self.refresh(self.presets[index]["name"])
+        self._changed()
+
+    def set_order(self, index: int, value: int) -> None:
+        if self._updating or not (0 <= index < len(self.presets)):
+            return
+        name = self.presets[index]["name"]
+        self.presets[index]["order"] = value
+        self._changed()
+        self.refresh(name)
 
     def selected_index(self) -> int:
         rows = self.table.selectionModel().selectedRows()
@@ -120,10 +153,15 @@ class PresetManagerDialog(QDialog):
         if self._updating or not (0 <= index < len(self.presets)):
             return
         enabled = state == Qt.CheckState.Checked.value
-        if enabled and sum(bool(item.get("favorite")) for item in self.presets) >= MAX_FAVORITES:
-            QMessageBox.information(self, "常用プリセット", f"常用プリセットは最大{MAX_FAVORITES}件です。")
+        if not enabled and self.presets[index].get("default"):
+            QMessageBox.information(self, "基本プリセット", "基本プリセットはクイック表示から外せません。")
             self.refresh(self.presets[index]["name"])
             return
+        if enabled and sum(bool(item.get("quick")) for item in self.presets) >= MAX_FAVORITES:
+            QMessageBox.information(self, "クイック表示", f"クイック表示は最大{MAX_FAVORITES}件です。")
+            self.refresh(self.presets[index]["name"])
+            return
+        self.presets[index]["quick"] = enabled
         self.presets[index]["favorite"] = enabled
         self._changed()
 
@@ -152,9 +190,31 @@ class PresetManagerDialog(QDialog):
             return
         name, memo = prompted
         item = self.current_settings()
-        item.update({"name": name, "memo": memo, "favorite": False, "builtin": False})
+        item.update({"name": name, "memo": memo, "favorite": False, "quick": False,
+                     "default": False, "order": len(self.presets) + 1, "builtin": False})
         self.presets.append(normalize_preset(item))
         self.refresh(name)
+        self._changed()
+
+    def update_selected(self) -> None:
+        index = self.selected_index()
+        if index < 0:
+            return
+        old = self.presets[index]
+        if old.get("builtin"):
+            QMessageBox.information(self, "更新", "標準プリセットは更新できません。複製して編集してください。")
+            return
+        if QMessageBox.question(
+            self, "プリセット更新確認",
+            f"「{old['name']}」を現在の画面設定で更新しますか？\n走査やコピーは開始されません。",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        updated = self.current_settings()
+        updated.update({key: old[key] for key in (
+            "name", "memo", "favorite", "quick", "default", "order", "builtin"
+        ) if key in old})
+        self.presets[index] = normalize_preset(updated)
+        self.refresh(str(old["name"]))
         self._changed()
 
     def edit_selected(self) -> None:
@@ -177,7 +237,9 @@ class PresetManagerDialog(QDialog):
         prompted = self._prompt_name_and_memo(str(source["name"]) + " のコピー", str(source.get("memo", "")))
         if not prompted:
             return
-        source.update({"name": prompted[0], "memo": prompted[1], "favorite": False, "builtin": False})
+        source.update({"name": prompted[0], "memo": prompted[1], "favorite": False,
+                       "quick": False, "default": False,
+                       "order": len(self.presets) + 1, "builtin": False})
         self.presets.append(normalize_preset(source))
         self.refresh(source["name"])
         self._changed()

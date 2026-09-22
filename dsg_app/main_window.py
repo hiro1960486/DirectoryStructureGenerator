@@ -1,7 +1,7 @@
 """Modern PySide6 user interface.
 
-Version: 2.7.0
-Updated: 2026-09-22
+Version: 2.8.0
+Updated: 2026-09-23
 Author: hiro1960
 """
 
@@ -146,14 +146,19 @@ class MainWindow(QMainWindow):
         self.thread: QThread | None = None
         self.worker: ScanWorker | None = None
         self._generate_after_scan = False
+        self._preset_tracking_ready = False
         self.setWindowTitle(f"{APP_NAME}  Ver.{APP_VERSION}")
         self.setAcceptDrops(True)
         self.resize(int(self.config["window"]["width"]), int(self.config["window"]["height"]))
         self.setMinimumSize(980, 680)
         self._build_ui()
         self._load_config_into_ui()
+        self._connect_preset_change_tracking()
+        self._preset_tracking_ready = True
+        self._refresh_preset_save_state()
         self.apply_theme(str(self.config.get("theme", "dark")))
         QTimer.singleShot(0, self._clear_initial_text_selections)
+        QTimer.singleShot(0, self._apply_default_preset_on_startup)
 
     def _build_ui(self) -> None:
         toolbar = QToolBar("メインツールバー")
@@ -201,6 +206,9 @@ class MainWindow(QMainWindow):
         self.settings_preset_combo = QComboBox()
         self.settings_preset_combo.setToolTip("保存済みの設定セットを選びます")
         apply_settings_preset = QPushButton("適用")
+        self.update_settings_preset_button = QPushButton("現在の設定で更新")
+        self.update_settings_preset_button.setToolTip("選択中のユーザープリセットを、現在の画面設定で更新します")
+        self.update_settings_preset_button.clicked.connect(self.update_active_settings_preset)
         manage_settings_presets = QPushButton("管理…")
         apply_settings_preset.clicked.connect(
             lambda: self.apply_settings_preset(self.settings_preset_combo.currentText())
@@ -209,10 +217,14 @@ class MainWindow(QMainWindow):
         preset_top.addWidget(QLabel("プリセット"))
         preset_top.addWidget(self.settings_preset_combo, 1)
         preset_top.addWidget(apply_settings_preset)
+        preset_top.addWidget(self.update_settings_preset_button)
         preset_top.addWidget(manage_settings_presets)
         preset_layout.addLayout(preset_top)
+        self.preset_save_state = QLabel("プリセット未選択")
+        self.preset_save_state.setStyleSheet("color:#6b86aa;background:transparent;font-size:9pt")
+        preset_layout.addWidget(self.preset_save_state)
         favorites = QHBoxLayout()
-        favorites.addWidget(QLabel("常用"))
+        favorites.addWidget(QLabel("よく使う設定"))
         self.favorite_preset_buttons: list[QPushButton] = []
         for _ in range(5):
             button = QPushButton()
@@ -539,14 +551,18 @@ class MainWindow(QMainWindow):
     def refresh_settings_presets(self) -> None:
         presets = self.settings_presets()
         self.config["settings_presets"] = presets
-        current = str(self.config.get("active_settings_preset", ""))
+        default = next((item for item in presets if item.get("default")), presets[0] if presets else {})
+        current = str(self.config.get("active_settings_preset", "")) or str(default.get("name", ""))
         self.settings_preset_combo.blockSignals(True)
         self.settings_preset_combo.clear()
         self.settings_preset_combo.addItems([str(item["name"]) for item in presets])
         if current:
             self.settings_preset_combo.setCurrentText(current)
         self.settings_preset_combo.blockSignals(False)
-        favorites = [item for item in presets if item.get("favorite")][:5]
+        favorites = sorted(
+            (item for item in presets if item.get("quick", item.get("favorite"))),
+            key=lambda item: (int(item.get("order", 999)), str(item["name"]).casefold()),
+        )[:5]
         for index, button in enumerate(self.favorite_preset_buttons):
             if index < len(favorites):
                 name = str(favorites[index]["name"])
@@ -556,6 +572,72 @@ class MainWindow(QMainWindow):
                 button.setVisible(True)
             else:
                 button.setVisible(False)
+        if hasattr(self, "update_settings_preset_button"):
+            self._refresh_preset_save_state()
+
+    def _connect_preset_change_tracking(self) -> None:
+        self.source_combo.currentTextChanged.connect(self._refresh_preset_save_state)
+        self.output_combo.currentTextChanged.connect(self._refresh_preset_save_state)
+        self.excluded_dirs.textChanged.connect(self._refresh_preset_save_state)
+        for widget in (self.excluded_exts, self.included_exts, self.patterns):
+            widget.textChanged.connect(self._refresh_preset_save_state)
+        self.max_depth.valueChanged.connect(self._refresh_preset_save_state)
+        for checkbox in (self.hidden_check, self.empty_check, self.symlink_check, *self.format_checks.values()):
+            checkbox.toggled.connect(self._refresh_preset_save_state)
+
+    def _active_settings_preset(self) -> dict[str, object] | None:
+        name = str(self.config.get("active_settings_preset", ""))
+        return next((item for item in self.settings_presets() if item["name"] == name), None)
+
+    def _refresh_preset_save_state(self, *_args: object) -> None:
+        if not getattr(self, "_preset_tracking_ready", False):
+            return
+        preset = self._active_settings_preset()
+        if not preset:
+            self.update_settings_preset_button.setEnabled(False)
+            self.preset_save_state.setText("プリセット未選択")
+            return
+        snapshot = self.current_settings_snapshot()
+        changed = any(
+            snapshot.get(key) != preset.get(key)
+            for key in ("filters", "formats", "organizer")
+        ) or any(
+            bool(preset.get(key)) and snapshot.get(key) != preset.get(key)
+            for key in ("source", "output")
+        )
+        editable = not bool(preset.get("builtin"))
+        self.update_settings_preset_button.setEnabled(editable and changed)
+        if not editable:
+            self.preset_save_state.setText("標準プリセット（変更する場合は管理画面で複製）")
+        else:
+            self.preset_save_state.setText("変更あり（未保存）" if changed else "保存済み")
+
+    def update_active_settings_preset(self) -> None:
+        preset = self._active_settings_preset()
+        if not preset:
+            QMessageBox.information(self, "プリセット更新", "更新するユーザープリセットを適用してください。")
+            return
+        if preset.get("builtin"):
+            QMessageBox.information(self, "プリセット更新", "標準プリセットは更新できません。管理画面で複製してください。")
+            return
+        name = str(preset["name"])
+        if QMessageBox.question(
+            self, "プリセット更新確認",
+            f"「{name}」を現在の設定で更新しますか？\n\n"
+            "除外フォルダー、拡張子、出力形式などが上書きされます。\n"
+            "走査やコピーは開始されません。",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        values = self.settings_presets()
+        index = next(i for i, item in enumerate(values) if item["name"] == name)
+        self.config["preset_backup"] = dict(values[index])
+        updated = self.current_settings_snapshot()
+        updated.update({key: preset[key] for key in (
+            "name", "memo", "favorite", "quick", "default", "order", "builtin"
+        ) if key in preset})
+        values[index] = updated
+        self.update_settings_presets(values)
+        self.statusBar().showMessage(f"プリセット「{name}」を更新しました", 5000)
 
     def current_settings_snapshot(self) -> dict[str, object]:
         return {
@@ -566,8 +648,13 @@ class MainWindow(QMainWindow):
             "organizer": dict(self.config.get("organizer", {})),
         }
 
+    def _apply_default_preset_on_startup(self) -> None:
+        default = next((item for item in self.settings_presets() if item.get("default")), None)
+        if default:
+            self.apply_settings_preset(str(default["name"]), warn_missing=False)
+
     @Slot(str)
-    def apply_settings_preset(self, name: str) -> None:
+    def apply_settings_preset(self, name: str, warn_missing: bool = True) -> None:
         preset = next((item for item in self.settings_presets() if item["name"] == name), None)
         if not preset:
             return
@@ -592,12 +679,13 @@ class MainWindow(QMainWindow):
         self.config["active_settings_preset"] = name
         self.settings_preset_combo.setCurrentText(name)
         self._save_ui_config()
+        self._refresh_preset_save_state()
         memo = str(preset.get("memo", "")).strip()
         message = f"プリセット「{name}」を適用しました"
         if memo:
             message += f" — {memo}"
         self.statusBar().showMessage(message, 6000)
-        if missing_source:
+        if missing_source and warn_missing:
             QMessageBox.warning(
                 self, "プリセットの対象フォルダー",
                 "保存されていた対象フォルダーが見つかりません。\n"
