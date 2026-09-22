@@ -1,6 +1,6 @@
-"""Non-destructive file organization by copying to a chosen destination.
+"""File organization with safe copy and optional source removal.
 
-Version: 2.4.0
+Version: 2.5.0
 Updated: 2026-09-22
 Author: hiro1960
 """
@@ -69,6 +69,11 @@ def rendered_name(detail: FileDetail, template: str, index: int) -> str:
     return name
 
 
+def extension_was_changed(plan: CopyPlan) -> bool:
+    """Return True when a copy plan changes only the filename extension label."""
+    return plan.source.suffix.casefold() != plan.destination.suffix.casefold()
+
+
 def _numbered(path: Path, reserved: set[str]) -> Path:
     candidate = path
     number = 1
@@ -129,6 +134,7 @@ def append_copy_log(destination_root: Path, plans: list[CopyPlan]) -> Path:
 def execute_copy_plans(
     plans: list[CopyPlan],
     destination_root: Path,
+    delete_sources: bool = False,
     cancel_requested: Callable[[], bool] | None = None,
     progress: Callable[[int, int, str], None] | None = None,
 ) -> list[CopyPlan]:
@@ -146,12 +152,31 @@ def execute_copy_plans(
         progress(index, total, str(plan.source))
         if plan.status != "コピー予定":
             continue
+        copied = False
         try:
             plan.destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(plan.source, plan.destination)
-            plan.status = "コピー完了"
+            copied = True
+            if delete_sources:
+                source_size = plan.source.stat().st_size
+                destination_size = plan.destination.stat().st_size
+                if source_size != destination_size:
+                    raise OSError(
+                        "コピー元とコピー先のサイズが一致しないため、元ファイルを削除しませんでした。"
+                    )
+                try:
+                    plan.source.unlink()
+                    plan.status = "コピー完了・元ファイル削除"
+                except OSError as exc:
+                    plan.status = "コピー完了・元ファイル削除失敗"
+                    plan.error = str(exc)
+            else:
+                plan.status = "コピー完了"
         except OSError as exc:
-            plan.status = "コピー失敗"
+            if delete_sources and copied:
+                plan.status = "コピー完了・安全確認失敗"
+            else:
+                plan.status = "コピー失敗"
             plan.error = str(exc)
     destination_root.mkdir(parents=True, exist_ok=True)
     append_copy_log(destination_root, plans)

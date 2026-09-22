@@ -1,6 +1,6 @@
 """Modern PySide6 user interface.
 
-Version: 2.4.0
+Version: 2.5.0
 Updated: 2026-09-22
 Author: hiro1960
 """
@@ -48,7 +48,9 @@ QProgressBar::chunk { background:#2563eb; border-radius:5px; } QSplitter::handle
 QTableWidget { background:#0d1421; alternate-background-color:#121d2d; border:1px solid #2b3c56; border-radius:8px; selection-background-color:#1d4ed8; }
 QHeaderView::section { background:#17243a; color:#dbeafe; border:0; border-right:1px solid #2b3c56; padding:7px; font-weight:600; }
 QTabWidget::pane { border:1px solid #2b3c56; border-radius:8px; top:-1px; } QTabBar::tab { background:#17243a; padding:9px 16px; margin-right:3px; border-radius:7px; } QTabBar::tab:selected { background:#2563eb; color:white; }
-QFrame#previewCard { background:#17243a; border:1px solid #2b3c56; border-radius:12px; }
+QFrame#previewCard { background:#0b1220; border:1px solid #52647f; border-radius:12px; }
+QStackedWidget#previewCanvas { background:#050914; border:1px solid #52647f; border-radius:9px; }
+QLabel#previewPlaceholder { background:#050914; color:#f8fafc; border:1px dashed #64748b; border-radius:8px; font-weight:600; }
 QSlider::groove:horizontal { height:10px; background:#344966; border-radius:5px; } QSlider::handle:horizontal { width:22px; margin:-7px 0; background:#60a5fa; border:2px solid #dbeafe; border-radius:11px; }
 """
 
@@ -73,6 +75,8 @@ QTableWidget { background:white; alternate-background-color:#f6f9fd; border:1px 
 QHeaderView::section { background:#edf2f8; color:#172033; border:0; border-right:1px solid #d5deea; padding:7px; font-weight:600; }
 QTabWidget::pane { border:1px solid #d5deea; border-radius:8px; top:-1px; } QTabBar::tab { background:#e8eef6; padding:9px 16px; margin-right:3px; border-radius:7px; } QTabBar::tab:selected { background:#2563eb; color:white; }
 QFrame#previewCard { background:white; border:1px solid #d5deea; border-radius:12px; }
+QStackedWidget#previewCanvas { background:#f8fafc; border:1px solid #cbd5e1; border-radius:9px; }
+QLabel#previewPlaceholder { background:#f8fafc; color:#334155; border:1px dashed #94a3b8; border-radius:8px; font-weight:600; }
 QSlider::groove:horizontal { height:10px; background:#cbd5e1; border-radius:5px; } QSlider::handle:horizontal { width:22px; margin:-7px 0; background:#2563eb; border:2px solid #1e40af; border-radius:11px; }
 """
 

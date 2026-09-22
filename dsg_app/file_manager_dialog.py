@@ -1,6 +1,6 @@
-"""Popup UI for read-only inspection and non-destructive organization copies.
+"""Popup UI for read-only inspection and safety-checked file organization.
 
-Version: 2.4.0
+Version: 2.5.0
 Updated: 2026-09-22
 Author: hiro1960
 """
@@ -34,8 +34,8 @@ from .file_inspector import (
 )
 from .models import FilterSettings
 from .organizer import (
-    CopyCancelled, CopyPlan, build_copy_plans, execute_copy_plans, rendered_name,
-    sanitize_filename,
+    CopyCancelled, CopyPlan, build_copy_plans, execute_copy_plans,
+    extension_was_changed, rendered_name, sanitize_filename,
 )
 from .scanner import DirectoryScanner, ScanCancelled
 
@@ -217,16 +217,19 @@ class CopyWorker(QObject):
     cancelled = Signal()
     progress = Signal(int, int, str)
 
-    def __init__(self, plans: list[CopyPlan], destination: Path) -> None:
+    def __init__(
+        self, plans: list[CopyPlan], destination: Path, delete_sources: bool = False,
+    ) -> None:
         super().__init__()
         self.plans, self.destination = plans, destination
+        self.delete_sources = delete_sources
         self._cancel = False
 
     @Slot()
     def run(self) -> None:
         try:
             result = execute_copy_plans(
-                self.plans, self.destination,
+                self.plans, self.destination, delete_sources=self.delete_sources,
                 cancel_requested=lambda: self._cancel,
                 progress=lambda current, total, path: self.progress.emit(current, total, path),
             )
@@ -286,6 +289,7 @@ class FileManagerDialog(QDialog):
         self._applied_categories: set[str] = set()
         self._last_filter_signature: tuple[str, tuple[str, ...]] | None = None
         self._last_check_row: int | None = None
+        self._preview_from_plan = False
         self.media_duration = 0
         self.setWindowTitle("ファイル詳細・整理コピー")
         self.resize(1480, 860)
@@ -304,7 +308,7 @@ class FileManagerDialog(QDialog):
         hero_layout.addWidget(title)
         message = QLabel(
             "ファイルを確認・選択し、コピー側の名前を整えて保存します。"
-            "元ファイルの削除・移動・直接の名前変更は行いません。"
+            "既定では元ファイルを保持します。削除を選ぶ場合は実行前に必ず再確認します。"
         )
         message.setWordWrap(True)
         message.setStyleSheet("background:transparent")
@@ -315,7 +319,15 @@ class FileManagerDialog(QDialog):
         self.tabs.addTab(self._detail_tab(), "1. ファイル詳細")
         self.tabs.addTab(self._organize_tab(), "2. 整理コピー")
         self.tabs.currentChanged.connect(self._tab_changed)
-        outer.addWidget(self.tabs, 1)
+        self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.content_splitter.setChildrenCollapsible(False)
+        self.content_splitter.addWidget(self.tabs)
+        self.content_splitter.addWidget(self._preview_panel())
+        self.content_splitter.setSizes([1080, 360])
+        self.content_splitter.setStretchFactor(0, 1)
+        self.content_splitter.setStretchFactor(1, 0)
+        self.content_splitter.splitterMoved.connect(lambda *_args: self.update_preview(False))
+        outer.addWidget(self.content_splitter, 1)
 
         status = QHBoxLayout()
         self.status_label = QLabel("未解析")
@@ -416,7 +428,6 @@ class FileManagerDialog(QDialog):
         filters.addWidget(self.selection_count_label)
         layout.addLayout(filters)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
         self.table = QTableWidget(0, len(self.HEADERS))
         self.table.setHorizontalHeaderLabels(self.HEADERS)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -444,16 +455,20 @@ class FileManagerDialog(QDialog):
         self.table.viewport().installEventFilter(self)
         self.select_all_shortcut = QShortcut(QKeySequence.StandardKey.SelectAll, self.table)
         self.select_all_shortcut.activated.connect(lambda: self.set_visible_checks("all"))
-        splitter.addWidget(self.table)
+        layout.addWidget(self.table, 1)
+        return tab
 
+    def _preview_panel(self) -> QWidget:
         preview = QFrame(objectName="previewCard")
-        preview.setMinimumWidth(330)
+        preview.setMinimumWidth(280)
         preview_layout = QVBoxLayout(preview)
         preview_title = QLabel("プレビュー")
         preview_title.setStyleSheet("font-size:12pt;font-weight:700")
         preview_layout.addWidget(preview_title)
         self.preview_stack = QStackedWidget()
+        self.preview_stack.setObjectName("previewCanvas")
         self.preview_placeholder = QLabel("画像・動画・音声を選択すると\nここにプレビューします")
+        self.preview_placeholder.setObjectName("previewPlaceholder")
         self.preview_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_placeholder.setMinimumHeight(260)
         self.thumbnail = QLabel()
@@ -499,12 +514,7 @@ class FileManagerDialog(QDialog):
         preview_layout.addWidget(self.selected_info)
         preview_layout.addWidget(self.open_file_button)
         preview_layout.addWidget(self.open_folder_button)
-        splitter.addWidget(preview)
-        splitter.setSizes([1080, 350])
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 0)
-        layout.addWidget(splitter, 1)
-        return tab
+        return preview
 
     def _organize_tab(self) -> QWidget:
         tab = FolderDropWidget()
@@ -572,6 +582,16 @@ class FileManagerDialog(QDialog):
         self.collision_combo.setCurrentIndex(max(self.collision_combo.findData(collision), 0))
         self.collision_combo.currentIndexChanged.connect(self.invalidate_copy_plan)
         form.addRow("同名ファイルがある場合", self.collision_combo)
+        self.source_action_combo = QComboBox()
+        self.source_action_combo.addItem("元ファイルを保持する（推奨）", False)
+        self.source_action_combo.addItem("コピー成功後に元ファイルを削除する", True)
+        self.source_action_combo.currentIndexChanged.connect(self.on_source_action_changed)
+        form.addRow("元ファイルの扱い", self.source_action_combo)
+        self.source_action_warning = QLabel(
+            "元ファイルは保持されます。コピー側だけを整理・リネームします。"
+        )
+        self.source_action_warning.setWordWrap(True)
+        form.addRow("", self.source_action_warning)
         layout.addLayout(form)
 
         buttons = QHBoxLayout()
@@ -607,13 +627,14 @@ class FileManagerDialog(QDialog):
         self.plan_table.setColumnWidth(2, 520)
         self.plan_table.setColumnWidth(3, 160)
         self.plan_table.itemChanged.connect(self.on_plan_item_changed)
+        self.plan_table.currentCellChanged.connect(self.update_preview_from_plan)
         layout.addWidget(self.plan_table, 1)
-        warning = QLabel(
-            "安全仕様：元ファイルは変更・削除しません。コピー先が対象フォルダー内の場合は実行できません。"
+        self.organize_warning = QLabel(
+            "安全仕様：既定では元ファイルを保持します。コピー先が対象フォルダー内の場合は実行できません。"
             "コピー結果はコピー先の _DirectoryStructureGenerator_copy_log.csv に記録します。"
         )
-        warning.setWordWrap(True)
-        layout.addWidget(warning)
+        self.organize_warning.setWordWrap(True)
+        layout.addWidget(self.organize_warning)
         return tab
 
     def start_inspection(self) -> None:
@@ -675,9 +696,19 @@ class FileManagerDialog(QDialog):
         else:
             self.copy_plans = list(result)  # type: ignore[arg-type]
             self.populate_plan_table()
-            copied = sum(plan.status == "コピー完了" for plan in self.copy_plans)
-            failed = sum(plan.status == "コピー失敗" for plan in self.copy_plans)
-            self.status_label.setText(f"整理コピー完了: {copied:,}件 ｜ 失敗{failed:,}件")
+            copied = sum(plan.status.startswith("コピー完了") for plan in self.copy_plans)
+            deleted = sum(plan.status == "コピー完了・元ファイル削除" for plan in self.copy_plans)
+            failed = sum(
+                plan.status in {"コピー失敗", "コピー完了・安全確認失敗"}
+                for plan in self.copy_plans
+            )
+            delete_failed = sum(
+                plan.status == "コピー完了・元ファイル削除失敗" for plan in self.copy_plans
+            )
+            self.status_label.setText(
+                f"処理完了: コピー{copied:,}件 ｜ 元ファイル削除{deleted:,}件 ｜ "
+                f"削除失敗{delete_failed:,}件 ｜ 失敗{failed:,}件"
+            )
             destination = self.destination_combo.currentText().strip()
             if destination:
                 self.destination_history = [destination] + [
@@ -961,8 +992,9 @@ class FileManagerDialog(QDialog):
         selected = self.selected_details()
         return selected[0] if selected else None
 
-    def update_preview(self) -> None:
-        self.invalidate_copy_plan()
+    def update_preview(self, invalidate_plan: bool = True) -> None:
+        if invalidate_plan and not self._preview_from_plan:
+            self.invalidate_copy_plan()
         selected = self.selected_details()
         self.selection_label.setText(f"選択中: {len(selected):,}件")
         detail = self.focused_detail()
@@ -992,8 +1024,11 @@ class FileManagerDialog(QDialog):
             self.media_controls_widget.setVisible(False)
             pixmap = self.load_image_preview(Path(detail.full_path))
             if pixmap and not pixmap.isNull():
+                size = self.preview_stack.contentsRect().size()
+                width = max(240, size.width() - 16)
+                height = max(200, size.height() - 16)
                 self.thumbnail.setPixmap(
-                    pixmap.scaled(420, 280, Qt.AspectRatioMode.KeepAspectRatio,
+                    pixmap.scaled(width, height, Qt.AspectRatioMode.KeepAspectRatio,
                                   Qt.TransformationMode.SmoothTransformation)
                 )
                 self.preview_stack.setCurrentWidget(self.thumbnail)
@@ -1142,6 +1177,24 @@ class FileManagerDialog(QDialog):
         if index == 1:
             self.refresh_rename_table(preserve=True)
 
+    def update_preview_from_plan(self, *_args) -> None:  # type: ignore[no-untyped-def]
+        """Keep the shared preview in sync with the selected organize-plan row."""
+        row = self.plan_table.currentRow()
+        source_item = self.plan_table.item(row, 0) if row >= 0 else None
+        source_path = str(source_item.data(Qt.ItemDataRole.UserRole)) if source_item else ""
+        if not source_path:
+            return
+        for detail_row in range(self.table.rowCount()):
+            item = self.table.item(detail_row, self.NAME_COLUMN)
+            if item and str(item.data(Qt.ItemDataRole.UserRole)) == source_path:
+                self._preview_from_plan = True
+                try:
+                    self.table.setCurrentCell(detail_row, self.NAME_COLUMN)
+                    self.update_preview(False)
+                finally:
+                    self._preview_from_plan = False
+                break
+
     def choose_destination(self) -> None:
         initial = self.destination_combo.currentText().strip() or str(self.output)
         selected = QFileDialog.getExistingDirectory(self, "整理コピー先を選択", initial)
@@ -1231,6 +1284,23 @@ class FileManagerDialog(QDialog):
         if status:
             status.setText("再確認が必要")
 
+    def on_source_action_changed(self, *_args) -> None:  # type: ignore[no-untyped-def]
+        delete_sources = bool(self.source_action_combo.currentData())
+        if delete_sources:
+            self.source_action_warning.setText(
+                "注意：コピーが成功し、コピー元とコピー先のサイズが一致したファイルだけ、"
+                "元ファイルを削除します。実行時にもう一度確認します。"
+            )
+            self.source_action_warning.setStyleSheet("color:#dc2626;font-weight:700")
+            self.copy_button.setText("確認した内容でコピー後に元ファイルを削除")
+        else:
+            self.source_action_warning.setText(
+                "元ファイルは保持されます。コピー側だけを整理・リネームします。"
+            )
+            self.source_action_warning.setStyleSheet("")
+            self.copy_button.setText("確認した内容で整理コピー")
+        self.invalidate_copy_plan()
+
     def save_organizer_defaults(self) -> None:
         self.organizer_settings = {
             "default_destination": self.destination_combo.currentText().strip(),
@@ -1282,6 +1352,30 @@ class FileManagerDialog(QDialog):
         except ValueError as exc:
             QMessageBox.warning(self, "命名ルール", str(exc))
             return
+        extension_changes = [
+            plan for plan in self.copy_plans
+            if plan.status == "コピー予定" and extension_was_changed(plan)
+        ]
+        if extension_changes:
+            examples = "\n".join(
+                f"・{plan.source.name} → {plan.destination.name}"
+                for plan in extension_changes[:5]
+            )
+            more = (
+                f"\nほか {len(extension_changes) - 5:,}件" if len(extension_changes) > 5 else ""
+            )
+            answer = QMessageBox.warning(
+                self, "拡張子の変更を確認",
+                f"拡張子が変わる計画が {len(extension_changes):,}件あります。\n"
+                "拡張子名だけが変わり、ファイル内容の形式は変換されません。\n\n"
+                f"{examples}{more}\n\nこの内容で計画を作成しますか？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                self.copy_plans = []
+                self.copy_ready = False
+                return
         self.populate_plan_table()
         self.copy_ready = bool(self.copy_plans)
         self.copy_button.setEnabled(self.copy_ready)
@@ -1313,16 +1407,33 @@ class FileManagerDialog(QDialog):
             "\n\n大量のファイルが選択されています。件数とコピー先をもう一度確認してください。"
             if count >= 100 else ""
         )
+        delete_sources = bool(self.source_action_combo.currentData())
+        if delete_sources:
+            title = "最終確認：元ファイルを削除します"
+            message = (
+                f"{count:,}件の計画を実行します。\n\n"
+                "コピー成功後、コピー元とコピー先のサイズが一致した元ファイルを削除します。\n"
+                "この削除は元に戻せません。スキップ・コピー失敗・確認失敗の元ファイルは削除しません。"
+                f"{warning}\n\n本当に実行しますか？"
+            )
+        else:
+            title = "整理コピーの実行"
+            message = (
+                f"{count:,}件の計画を実行します。\n元ファイルは保持されます。"
+                f"{warning}\n\n実行しますか？"
+            )
         answer = QMessageBox.question(
-            self, "整理コピーの実行",
-            f"{count:,}件の計画を実行します。\n元ファイルは変更されません。"
-            f"{warning}\n\n実行しますか？",
+            self, title, message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
         destination = Path(self.destination_combo.currentText().strip()).expanduser().resolve()
         self.copy_ready = False
-        self._start_worker(CopyWorker(self.copy_plans, destination), "copy")
+        self._start_worker(
+            CopyWorker(self.copy_plans, destination, delete_sources=delete_sources), "copy"
+        )
 
     def invalidate_copy_plan(self, *_args) -> None:  # type: ignore[no-untyped-def]
         self.copy_ready = False
