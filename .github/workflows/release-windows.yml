@@ -50,11 +50,17 @@ jobs:
         run: |
           $version = "${{ inputs.version }}".TrimStart('v')
           $zip = "DirectoryStructureGeneratorGUI_Ver${version}_Windows_x64.zip"
+          $assets = @($zip, "$zip.sha256.txt")
+          $manual = "docs/DirectoryStructureGenerator_Ver${version}_操作マニュアル.pdf"
+          if (Test-Path -LiteralPath $manual) {
+            $assets += $manual
+          } else {
+            Write-Host "Ver.${version} manual is not available yet; publishing ZIP and SHA256 only."
+          }
           git tag "${{ inputs.version }}" 2>$null
           git push origin "${{ inputs.version }}"
           gh release create "${{ inputs.version }}" `
-            $zip "$zip.sha256.txt" `
-            "docs/DirectoryStructureGenerator_Ver${version}_操作マニュアル.pdf" `
+            $assets `
             --title "Directory Structure Generator Ver.${version}" `
             --notes-file "RELEASE_NOTES_v${version}.md" `
             --latest
