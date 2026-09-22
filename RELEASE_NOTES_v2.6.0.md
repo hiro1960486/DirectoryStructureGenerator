@@ -1,4 +1,4 @@
-# Directory Structure Generator Ver.2.6.0（開発版）
+# Directory Structure Generator Ver.2.6.0
 
 ## 主な変更
 

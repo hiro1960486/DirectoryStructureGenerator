@@ -1,4 +1,4 @@
-# Directory Structure Generator Ver.2.6.0（開発中）
+# Directory Structure Generator Ver.2.6.0
 
 フォルダー構成を走査し、必要な項目だけを **TXT / HTML / CSV / JSON** に出力するWindows向けGUIアプリです。
 
