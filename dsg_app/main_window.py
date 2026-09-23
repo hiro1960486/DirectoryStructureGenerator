@@ -1,6 +1,6 @@
 """Modern PySide6 user interface.
 
-Version: 2.8.0
+Version: 2.8.1
 Updated: 2026-09-23
 Author: hiro1960
 """
@@ -150,7 +150,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{APP_NAME}  Ver.{APP_VERSION}")
         self.setAcceptDrops(True)
         self.resize(int(self.config["window"]["width"]), int(self.config["window"]["height"]))
-        self.setMinimumSize(980, 680)
+        self.setMinimumSize(980, 760)
         self._build_ui()
         self._load_config_into_ui()
         self._connect_preset_change_tracking()
@@ -270,6 +270,7 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
         settings_panel = QWidget()
+        settings_panel.setMinimumWidth(430)
         settings_layout = QVBoxLayout(settings_panel)
         settings_layout.setContentsMargins(0, 0, 8, 0)
 
@@ -311,7 +312,8 @@ class MainWindow(QMainWindow):
         filter_scroll.setWidgetResizable(True)
         filter_scroll.setFrameShape(QFrame.Shape.NoFrame)
         filter_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        filter_scroll.setMinimumHeight(190)
+        filter_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        filter_scroll.setMinimumHeight(340)
         filter_scroll.setWidget(filters)
         settings_layout.addWidget(filter_scroll, 1)
 
