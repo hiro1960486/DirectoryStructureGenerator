@@ -1,7 +1,7 @@
 """Popup UI for read-only inspection and safety-checked file organization.
 
-Version: 2.7.0
-Updated: 2026-09-22
+Version: 2.8.1
+Updated: 2026-09-23
 Author: hiro1960
 """
 
@@ -294,6 +294,11 @@ class FileManagerDialog(QDialog):
         ("画像・動画・一般別＋連番", "{type}_{index:03d}{ext}"),
         ("高度な命名ルール", "__custom__"),
     ]
+    COMMON_EXTENSIONS = [
+        ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff",
+        ".svg", ".pdf", ".txt", ".csv", ".json", ".docx", ".xlsx", ".pptx",
+        ".mp4", ".mov", ".mp3", ".wav",
+    ]
 
     def __init__(
         self, source: Path, output: Path, settings: FilterSettings,
@@ -304,6 +309,11 @@ class FileManagerDialog(QDialog):
         self.source, self.output, self.settings = source, output, settings
         self.destination_history = list(destination_history or [])
         self.organizer_settings = dict(organizer_settings or {})
+        saved_extensions = self.organizer_settings.get("custom_extensions", [])
+        self.custom_extensions = [
+            self.normalized_extension(str(value))
+            for value in saved_extensions if str(value).strip()
+        ] if isinstance(saved_extensions, list) else []
         self.details: list[FileDetail] = []
         self.detail_by_path: dict[str, FileDetail] = {}
         self.copy_plans: list[CopyPlan] = []
@@ -654,9 +664,9 @@ class FileManagerDialog(QDialog):
         buttons.addStretch()
         layout.addLayout(buttons)
 
-        self.plan_table = QTableWidget(0, 4)
+        self.plan_table = QTableWidget(0, 5)
         self.plan_table.setHorizontalHeaderLabels(
-            ["元ファイル名（変更しません）", "新しいファイル名（編集可）", "コピー先", "状態"]
+            ["元ファイル名（変更しません）", "新しいファイル名（編集可）", "拡張子", "コピー先", "状態"]
         )
         self.plan_table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
@@ -668,9 +678,10 @@ class FileManagerDialog(QDialog):
         plan_header = self.plan_table.horizontalHeader()
         plan_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.plan_table.setColumnWidth(0, 310)
-        self.plan_table.setColumnWidth(1, 310)
-        self.plan_table.setColumnWidth(2, 520)
-        self.plan_table.setColumnWidth(3, 160)
+        self.plan_table.setColumnWidth(1, 280)
+        self.plan_table.setColumnWidth(2, 120)
+        self.plan_table.setColumnWidth(3, 520)
+        self.plan_table.setColumnWidth(4, 160)
         self.plan_table.itemChanged.connect(self.on_plan_item_changed)
         self.plan_table.currentCellChanged.connect(self.update_preview_from_plan)
         layout.addWidget(self.plan_table, 1)
@@ -1472,8 +1483,11 @@ class FileManagerDialog(QDialog):
             for row in range(self.plan_table.rowCount()):
                 source_item = self.plan_table.item(row, 0)
                 name_item = self.plan_table.item(row, 1)
-                if source_item and name_item:
-                    previous[str(source_item.data(Qt.ItemDataRole.UserRole))] = name_item.text()
+                extension = self.plan_table.cellWidget(row, 2)
+                if source_item and name_item and isinstance(extension, QComboBox):
+                    previous[str(source_item.data(Qt.ItemDataRole.UserRole))] = (
+                        name_item.text() + self.normalized_extension(extension.currentText())
+                    )
         details = self.selected_details()
         self.selection_label.setText(
             f"選択中: {len(details):,}件　｜　新しいファイル名は表の2列目をダブルクリックして変更できます。"
@@ -1486,15 +1500,28 @@ class FileManagerDialog(QDialog):
             original.setToolTip(detail.relative_path)
             original.setFlags(original.flags() & ~Qt.ItemFlag.ItemIsEditable)
             new_name = previous.get(detail.full_path) or self.suggested_copy_name(detail, row + 1)
-            renamed = QTableWidgetItem(new_name)
+            new_path = Path(new_name)
+            extension_text = new_path.suffix
+            stem_text = new_name[:-len(extension_text)] if extension_text else new_name
+            renamed = QTableWidgetItem(stem_text)
+            renamed.setToolTip("拡張子を除いたファイル名を入力します")
+            extension = QComboBox()
+            extension.setEditable(True)
+            extension.setToolTip("候補から選ぶか、先頭に . を付けて入力します")
+            extension.addItems(self.extension_candidates(extension_text))
+            if not extension_text:
+                extension.insertItem(0, "")
+            extension.setCurrentText(extension_text)
+            self.connect_extension_combo(extension)
             destination = QTableWidgetItem("事前確認後に表示")
             status = QTableWidgetItem("未確認")
             destination.setFlags(destination.flags() & ~Qt.ItemFlag.ItemIsEditable)
             status.setFlags(status.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.plan_table.setItem(row, 0, original)
             self.plan_table.setItem(row, 1, renamed)
-            self.plan_table.setItem(row, 2, destination)
-            self.plan_table.setItem(row, 3, status)
+            self.plan_table.setCellWidget(row, 2, extension)
+            self.plan_table.setItem(row, 3, destination)
+            self.plan_table.setItem(row, 4, status)
         self.plan_table.blockSignals(False)
         self.invalidate_copy_plan()
 
@@ -1502,9 +1529,50 @@ class FileManagerDialog(QDialog):
         if item.column() != 1:
             return
         self.invalidate_copy_plan()
-        status = self.plan_table.item(item.row(), 3)
+        status = self.plan_table.item(item.row(), 4)
         if status:
             status.setText("再確認が必要")
+
+    @staticmethod
+    def normalized_extension(value: str) -> str:
+        value = value.strip()
+        if not value:
+            return ""
+        return value if value.startswith(".") else "." + value
+
+    def extension_candidates(self, current: str = "") -> list[str]:
+        values = [current, *self.custom_extensions, *self.COMMON_EXTENSIONS]
+        result: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            normalized = self.normalized_extension(value)
+            key = normalized.casefold()
+            if normalized and key not in seen:
+                seen.add(key)
+                result.append(normalized)
+        return result
+
+    def connect_extension_combo(self, combo: QComboBox) -> None:
+        combo.currentTextChanged.connect(self.invalidate_copy_plan)
+        line_edit = combo.lineEdit()
+        if line_edit:
+            line_edit.editingFinished.connect(lambda combo=combo: self.register_extension(combo))
+
+    def register_extension(self, combo: QComboBox) -> None:
+        normalized = self.normalized_extension(combo.currentText())
+        if not normalized:
+            return
+        combo.setCurrentText(normalized)
+        if all(value.casefold() != normalized.casefold() for value in self.custom_extensions):
+            self.custom_extensions.append(normalized)
+            self.organizer_settings["custom_extensions"] = list(self.custom_extensions)
+        for row in range(self.plan_table.rowCount()):
+            row_combo = self.plan_table.cellWidget(row, 2)
+            if isinstance(row_combo, QComboBox) and row_combo.findText(
+                normalized, Qt.MatchFlag.MatchFixedString
+            ) < 0:
+                row_combo.addItem(normalized)
+        self.invalidate_copy_plan()
 
     def on_source_action_changed(self, *_args) -> None:  # type: ignore[no-untyped-def]
         delete_sources = bool(self.source_action_combo.currentData())
@@ -1530,6 +1598,7 @@ class FileManagerDialog(QDialog):
             "custom_template": self.custom_template.text().strip(),
             "keep_subfolders": self.keep_subfolders.isChecked(),
             "collision": str(self.collision_combo.currentData()),
+            "custom_extensions": list(self.custom_extensions),
         }
         self.status_label.setText("現在の整理コピー設定を既定値として保存しました。")
 
@@ -1560,8 +1629,11 @@ class FileManagerDialog(QDialog):
         for row in range(self.plan_table.rowCount()):
             source_item = self.plan_table.item(row, 0)
             name_item = self.plan_table.item(row, 1)
-            if source_item and name_item:
-                overrides[str(source_item.data(Qt.ItemDataRole.UserRole))] = name_item.text().strip()
+            extension = self.plan_table.cellWidget(row, 2)
+            if source_item and name_item and isinstance(extension, QComboBox):
+                overrides[str(source_item.data(Qt.ItemDataRole.UserRole))] = (
+                    name_item.text().strip() + self.normalized_extension(extension.currentText())
+                )
         if any(not value for value in overrides.values()):
             QMessageBox.warning(self, "確認", "新しいファイル名が空欄の行があります。")
             return
@@ -1610,15 +1682,26 @@ class FileManagerDialog(QDialog):
             original = QTableWidgetItem(Path(plan.relative_path).name)
             original.setData(Qt.ItemDataRole.UserRole, str(plan.source))
             original.setToolTip(plan.relative_path)
-            new_name = QTableWidgetItem(plan.destination.name)
+            destination_name = plan.destination.name
+            extension_text = Path(destination_name).suffix
+            stem_text = destination_name[:-len(extension_text)] if extension_text else destination_name
+            new_name = QTableWidgetItem(stem_text)
+            extension = QComboBox()
+            extension.setEditable(True)
+            extension.addItems(self.extension_candidates(extension_text))
+            if not extension_text:
+                extension.insertItem(0, "")
+            extension.setCurrentText(extension_text)
+            self.connect_extension_combo(extension)
             destination = QTableWidgetItem(str(plan.destination))
             status = QTableWidgetItem(plan.status)
             for item in (original, destination, status):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.plan_table.setItem(row, 0, original)
             self.plan_table.setItem(row, 1, new_name)
-            self.plan_table.setItem(row, 2, destination)
-            self.plan_table.setItem(row, 3, status)
+            self.plan_table.setCellWidget(row, 2, extension)
+            self.plan_table.setItem(row, 3, destination)
+            self.plan_table.setItem(row, 4, status)
         self.plan_table.blockSignals(False)
 
     def start_copy(self) -> None:
