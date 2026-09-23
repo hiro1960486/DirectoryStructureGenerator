@@ -148,8 +148,9 @@ target               Rust・Javaなどの生成物
 
 ## 操作マニュアル（PDF）
 
-- 現在の公開版：[Directory Structure Generator Ver.2.6.0 操作マニュアル](docs/DirectoryStructureGenerator_Ver2.6.0_操作マニュアル.pdf)
-- 画面画像付きで、初回起動、列のソート・フィルター、右クリック操作、メディア確認、整理コピー、安全設定を説明しています。
+- 最新版：[Directory Structure Generator Ver.2.8.1 操作マニュアル（PDF）](docs/DirectoryStructureGenerator_Ver2.8.1_操作マニュアル.pdf)
+- 編集用：[Directory Structure Generator Ver.2.8.1 操作マニュアル（PowerPoint）](docs/DirectoryStructureGenerator_Ver2.8.1_操作マニュアル.pptx)
+- 画面画像付きで、初回起動、設定プリセット、フィルター、列のソート、右クリック操作、メディア確認、整理コピー、ファイル名と拡張子の分離編集、安全設定を説明しています。
 
 `START_APP.bat`はCMD画面を勝手に閉じません。起動に失敗した場合は、同じフォルダーの`startup_error.log`に原因を保存して画面にも表示します。
 
