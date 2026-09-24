@@ -1,7 +1,7 @@
 """Directory Structure Generator entry point with visible crash reporting.
 
-Version: 2.7.0
-Updated: 2026-09-22
+Version: 2.9.0
+Updated: 2026-09-24
 Author: hiro1960
 """
 
@@ -38,9 +38,16 @@ def report_fatal_error(title: str, details: str) -> None:
     print(message, file=sys.stderr)
 
 
+def resource_path(filename: str) -> Path:
+    """Resolve bundled resources in both source and PyInstaller builds."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / filename
+
+
 def main() -> int:
     try:
         from PySide6.QtCore import Qt
+        from PySide6.QtGui import QIcon
         from PySide6.QtWidgets import QApplication, QMessageBox
         from dsg_app.main_window import MainWindow
         from dsg_app.version import APP_NAME, APP_VERSION
@@ -60,6 +67,7 @@ def main() -> int:
         application.setApplicationName(APP_NAME)
         application.setApplicationVersion(APP_VERSION)
         application.setOrganizationName("hiro1960")
+        application.setWindowIcon(QIcon(str(resource_path("DirectoryStructureGenerator_AppIcon.ico"))))
         window = MainWindow()
         window.show()
         return application.exec()
