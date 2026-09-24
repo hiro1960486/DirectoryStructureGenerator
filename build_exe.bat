@@ -1,10 +1,9 @@
 @echo off
 setlocal EnableExtensions
-cd /d "%~dp0"
 title Directory Structure Generator - EXE Build
 
 set "APP_NAME=DirectoryStructureGeneratorGUI"
-set "APP_VERSION=2.7.0"
+set "APP_VERSION=2.9.0"
 set "APP_PYTHON=%~dp0.venv\Scripts\python.exe"
 set "BUILD_LOG=%~dp0build_log.txt"
 set "DIST_DIR=%~dp0dist\%APP_NAME%"
@@ -22,7 +21,7 @@ echo ============================================================
 echo.
 
 >"%BUILD_LOG%" echo [%date% %time%] Build started.
->>"%BUILD_LOG%" echo Project directory: %CD%
+>>"%BUILD_LOG%" echo Project directory: "%~dp0"
 
 if not exist "%~dp0app.py" goto missing_files
 if not exist "%~dp0requirements-build.txt" goto missing_files
@@ -49,7 +48,7 @@ if not exist "%APP_PYTHON%" (
 )
 
 echo [3/7] Checking build packages...
-"%APP_PYTHON%" -c "import PySide6, PIL, PyInstaller, hachoir" >>"%BUILD_LOG%" 2>&1
+"%APP_PYTHON%" -c "import PySide6, PIL, PyInstaller, hachoir, openpyxl" >>"%BUILD_LOG%" 2>&1
 if errorlevel 1 (
     echo Installing PySide6, Pillow and PyInstaller. This may take several minutes...
     "%APP_PYTHON%" -m pip install --upgrade pip >>"%BUILD_LOG%" 2>&1
@@ -59,6 +58,7 @@ if errorlevel 1 (
 )
 
 echo [4/7] Running automatic tests...
+set "PYTHONPATH=%~dp0;%PYTHONPATH%"
 "%APP_PYTHON%" -m unittest discover -s "%~dp0tests" -v >>"%BUILD_LOG%" 2>&1
 if errorlevel 1 goto test_failed
 
@@ -74,17 +74,14 @@ if not exist "%RELEASE_DIR%" mkdir "%RELEASE_DIR%"
 
 echo [6/7] Building the Windows application...
 echo This step may take several minutes. Please wait...
-"%APP_PYTHON%" -m PyInstaller ^
-  --noconfirm ^
-  --windowed ^
-  --onedir ^
-  --collect-submodules hachoir ^
-  --name "%APP_NAME%" ^
-  "%~dp0app.py" >>"%BUILD_LOG%" 2>&1
+"%APP_PYTHON%" -m PyInstaller --noconfirm --windowed --onedir --distpath "%~dp0dist" --workpath "%~dp0build" --specpath "%~dp0build" --collect-submodules hachoir --collect-all openpyxl --icon "%~dp0DirectoryStructureGenerator_AppIcon.ico" --add-data "%~dp0DirectoryStructureGenerator_AppIcon.ico;." --name "%APP_NAME%" "%~dp0app.py" >>"%BUILD_LOG%" 2>&1
 if errorlevel 1 goto build_failed
 
 if not exist "%DIST_DIR%\%APP_NAME%.exe" goto exe_missing
 if exist "%~dp0README.md" copy /y "%~dp0README.md" "%DIST_DIR%\README.md" >nul
+if not exist "%DIST_DIR%\docs" mkdir "%DIST_DIR%\docs"
+if exist "%~dp0docs\DirectoryStructureGenerator_AppIcon_512.png" copy /y "%~dp0docs\DirectoryStructureGenerator_AppIcon_512.png" "%DIST_DIR%\docs\" >nul
+if exist "%~dp0docs\DirectoryStructureGenerator_Ver%APP_VERSION%_操作マニュアル.pdf" copy /y "%~dp0docs\DirectoryStructureGenerator_Ver%APP_VERSION%_操作マニュアル.pdf" "%DIST_DIR%\docs\" >nul
 
 if "%SKIP_ZIP%"=="1" goto build_completed
 
@@ -117,14 +114,14 @@ echo ============================================================
 echo BUILD COMPLETED SUCCESSFULLY
 echo ============================================================
 echo EXE:
-echo %DIST_DIR%\%APP_NAME%.exe
+echo "%DIST_DIR%\%APP_NAME%.exe"
 if "%SKIP_ZIP%"=="1" (
     echo.
     echo ZIP creation was skipped for this fast test build.
 ) else (
     echo.
     echo Distribution ZIP:
-    echo %ZIP_PATH%
+    echo "%ZIP_PATH%"
 )
 echo.
 if "%SKIP_ZIP%"=="1" (
