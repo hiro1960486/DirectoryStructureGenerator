@@ -1,7 +1,7 @@
 """Popup UI for read-only inspection and safety-checked file organization.
 
-Version: 2.8.1
-Updated: 2026-09-23
+Version: 2.9.0
+Updated: 2026-09-24
 Author: hiro1960
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QEvent, QItemSelectionModel, QObject, QRect, QThread, Qt, QUrl, Signal, Slot,
+    QEvent, QItemSelectionModel, QObject, QProcess, QRect, QThread, Qt, QUrl, Signal, Slot,
 )
 from PySide6.QtGui import (
     QCloseEvent, QDesktopServices, QDragEnterEvent, QDragMoveEvent, QDropEvent,
@@ -21,7 +21,7 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout,
-    QFrame, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
+    QFrame, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
     QMenu, QMessageBox, QProgressBar, QPushButton, QSlider, QSplitter, QStackedWidget,
     QStyle, QStyleOptionButton, QTabWidget, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
@@ -36,13 +36,28 @@ from .file_inspector import (
 )
 from .models import FilterSettings
 from .organizer import (
-    CopyCancelled, CopyPlan, build_copy_plans, execute_copy_plans,
+    RESULT_LOG_NAME, CopyCancelled, CopyPlan, build_copy_plans, execute_copy_plans,
     extension_was_changed, rendered_name, sanitize_filename,
 )
 from .scanner import DirectoryScanner, ScanCancelled
 
 
 SORT_ROLE = Qt.ItemDataRole.UserRole.value + 1
+
+
+def copy_result_counts(plans: list[CopyPlan]) -> dict[str, int]:
+    """Return mutually exclusive copy-result counts for the completion UI."""
+    counts = {"success": 0, "skipped": 0, "failed": 0, "cancelled": 0}
+    for plan in plans:
+        if plan.status in {"コピー完了", "コピー完了・元ファイル削除"}:
+            counts["success"] += 1
+        elif "スキップ" in plan.status:
+            counts["skipped"] += 1
+        elif plan.status == "中止により未実行":
+            counts["cancelled"] += 1
+        else:
+            counts["failed"] += 1
+    return counts
 
 
 class SortableTableWidgetItem(QTableWidgetItem):
@@ -327,6 +342,9 @@ class FileManagerDialog(QDialog):
         self._last_check_row: int | None = None
         self._preview_from_plan = False
         self.media_duration = 0
+        self.last_copy_log_path: Path | None = None
+        self.last_copy_destination: Path | None = None
+        self.last_copied_files: list[Path] = []
         self.setWindowTitle("ファイル詳細・整理コピー")
         self.resize(1480, 860)
         self.setMinimumSize(1080, 680)
@@ -664,6 +682,30 @@ class FileManagerDialog(QDialog):
         buttons.addStretch()
         layout.addLayout(buttons)
 
+        result_group = QGroupBox("前回の整理結果")
+        result_layout = QVBoxLayout(result_group)
+        self.copy_result_summary = QLabel("まだ整理コピーを実行していません。")
+        self.copy_result_summary.setWordWrap(True)
+        self.copy_result_path = QLabel("結果CSV: ―")
+        self.copy_result_path.setWordWrap(True)
+        self.copy_result_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        result_layout.addWidget(self.copy_result_summary)
+        result_layout.addWidget(self.copy_result_path)
+        result_buttons = QHBoxLayout()
+        self.open_copy_log_button = QPushButton("結果CSVを開く")
+        self.open_copy_destination_button = QPushButton("保存先を開く")
+        self.reveal_copied_file_button = QPushButton("保存後ファイルを表示")
+        self.open_copy_log_button.clicked.connect(self.open_last_copy_log)
+        self.open_copy_destination_button.clicked.connect(self.open_last_copy_destination)
+        self.reveal_copied_file_button.clicked.connect(self.reveal_selected_copied_file)
+        result_buttons.addWidget(self.open_copy_log_button)
+        result_buttons.addWidget(self.open_copy_destination_button)
+        result_buttons.addWidget(self.reveal_copied_file_button)
+        result_buttons.addStretch()
+        result_layout.addLayout(result_buttons)
+        layout.addWidget(result_group)
+        self.update_copy_result_buttons()
+
         self.plan_table = QTableWidget(0, 5)
         self.plan_table.setHorizontalHeaderLabels(
             ["元ファイル名（変更しません）", "新しいファイル名（編集可）", "拡張子", "コピー先", "状態"]
@@ -765,6 +807,7 @@ class FileManagerDialog(QDialog):
                 f"処理完了: コピー{copied:,}件 ｜ 元ファイル削除{deleted:,}件 ｜ "
                 f"削除失敗{delete_failed:,}件 ｜ 失敗{failed:,}件"
             )
+            self.show_copy_summary(self.copy_plans)
             destination = self.destination_combo.currentText().strip()
             if destination:
                 self.destination_history = [destination] + [
@@ -779,6 +822,9 @@ class FileManagerDialog(QDialog):
     @Slot()
     def on_cancelled(self) -> None:
         self.status_label.setText("処理を中止しました")
+        if self._mode == "copy":
+            self.populate_plan_table()
+            self.show_copy_summary(self.copy_plans, cancelled=True)
 
     @Slot()
     def _thread_finished(self) -> None:
@@ -794,6 +840,12 @@ class FileManagerDialog(QDialog):
         self.copy_button.setEnabled(not running and self.copy_ready)
         self.cancel_button.setEnabled(running)
         self.close_button.setEnabled(not running)
+        if running and self._mode == "copy":
+            self.open_copy_log_button.setEnabled(False)
+            self.open_copy_destination_button.setEnabled(False)
+            self.reveal_copied_file_button.setEnabled(False)
+        elif not running:
+            self.update_copy_result_buttons()
         self.progress.setRange(0, 0 if running else 1)
         if not running:
             self.progress.setValue(1 if self.details else 0)
@@ -802,6 +854,85 @@ class FileManagerDialog(QDialog):
         if self.worker:
             self.worker.cancel()
             self.status_label.setText("中止を待っています…")
+
+    def show_copy_summary(self, plans: list[CopyPlan], cancelled: bool = False) -> None:
+        destination_text = self.destination_combo.currentText().strip()
+        destination = Path(destination_text).expanduser().resolve() if destination_text else None
+        log_path = destination / RESULT_LOG_NAME if destination else None
+        counts = copy_result_counts(plans)
+        self.last_copy_destination = destination
+        self.last_copy_log_path = log_path if log_path and log_path.exists() else None
+        self.last_copied_files = [
+            plan.destination for plan in plans
+            if plan.status.startswith("コピー完了") and plan.destination.exists()
+        ]
+        prefix = "中止時点" if cancelled else "完了"
+        self.copy_result_summary.setText(
+            f"{prefix}: 成功 {counts['success']:,}件 ｜ スキップ {counts['skipped']:,}件 ｜ "
+            f"失敗 {counts['failed']:,}件 ｜ 未実行 {counts['cancelled']:,}件"
+        )
+        self.copy_result_path.setText(
+            f"結果CSV: {self.last_copy_log_path or '生成されませんでした'}"
+        )
+        self.copy_result_path.setToolTip(str(self.last_copy_log_path or ""))
+        self.update_copy_result_buttons()
+        if not cancelled:
+            QMessageBox.information(
+                self, "整理コピー結果",
+                f"保存先: {destination or '―'}\n\n"
+                f"成功: {counts['success']:,}件\n"
+                f"スキップ: {counts['skipped']:,}件\n"
+                f"失敗: {counts['failed']:,}件\n"
+                f"未実行: {counts['cancelled']:,}件\n\n"
+                f"結果CSV: {self.last_copy_log_path or '生成されませんでした'}",
+            )
+
+    def update_copy_result_buttons(self) -> None:
+        if self.thread and self.thread.isRunning() and self._mode == "copy":
+            self.open_copy_log_button.setEnabled(False)
+            self.open_copy_destination_button.setEnabled(False)
+            self.reveal_copied_file_button.setEnabled(False)
+            return
+        self.open_copy_log_button.setEnabled(
+            bool(self.last_copy_log_path and self.last_copy_log_path.exists())
+        )
+        self.open_copy_destination_button.setEnabled(
+            bool(self.last_copy_destination and self.last_copy_destination.exists())
+        )
+        self.reveal_copied_file_button.setEnabled(bool(self.last_copied_files))
+
+    def open_last_copy_log(self) -> None:
+        path = self.last_copy_log_path
+        if not path or not path.exists():
+            QMessageBox.warning(self, "結果CSV", "結果CSVが見つかりません。")
+            self.update_copy_result_buttons()
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def open_last_copy_destination(self) -> None:
+        path = self.last_copy_destination
+        if not path or not path.exists():
+            QMessageBox.warning(self, "保存先", "保存先フォルダーが見つかりません。")
+            self.update_copy_result_buttons()
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def reveal_selected_copied_file(self) -> None:
+        path: Path | None = None
+        row = self.plan_table.currentRow()
+        if 0 <= row < len(self.copy_plans):
+            selected = self.copy_plans[row].destination
+            if selected in self.last_copied_files and selected.exists():
+                path = selected
+        if path is None:
+            path = next((item for item in self.last_copied_files if item.exists()), None)
+        if path is None:
+            self.open_last_copy_destination()
+            return
+        started = QProcess.startDetached("explorer.exe", ["/select,", str(path)])
+        if (started[0] if isinstance(started, tuple) else started):
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
 
     def populate_table(self) -> None:
         self._table_populating = True

@@ -1,15 +1,23 @@
-# Directory Structure Generator Ver.2.8.1
+# Directory Structure Generator Ver.2.9.0
 
 フォルダー構成を走査し、必要な項目だけを **TXT / HTML / CSV / JSON** に出力するWindows向けGUIアプリです。
 
-- Version: 2.8.1
-- Updated: 2026-09-23
+- Version: 2.9.0
+- Updated: 2026-09-24
 - Author: hiro1960
 - UI: PySide6
 - 対応OS: Windows 10 / 11（64ビット推奨）
 - Python: 3.10以上（Python 3.13対応）
 
 ## 今回の主な改善
+
+- 整理コピー後に、保存先、成功・スキップ・失敗・未実行件数を画面で確認可能
+- 「結果CSVを開く」「保存先を開く」「保存後ファイルを表示」を整理コピー画面へ追加
+- コピー結果CSVをExcel向けのUTF-8 BOM・CRLF・18列形式へ拡張
+- コピー結果CSVにExcelリンク、パーセントエンコード済みURI、エラー分類を記録
+- コピー先に `保存先を開く.url` を生成
+- 既存の旧形式CSVは、初回のみ日時付きの `_legacy_` ファイルへ退避
+- ファイル名・パス・エラー文字列に対するCSV数式インジェクション対策を追加
 
 - 整理コピーのファイル名と拡張子を分離し、拡張子を候補選択または手入力可能に改善
 - メイン画面のフィルター領域を広げ、小さい画面でもスクロールして全項目を確認可能に改善
@@ -141,6 +149,9 @@ target               Rust・Javaなどの生成物
 6. 「元ファイルの扱い」を選びます。通常は「元ファイルを保持する（推奨）」のまま使用してください。
 7. 「コピー内容を事前確認」で、コピー先を確認します。
 8. 「確認した内容で整理コピー」を押します。
+9. 完了後は「前回の整理結果」で件数と保存先を確認し、結果CSV・保存先・保存後ファイルを直接開けます。
+
+コピー先には `_DirectoryStructureGenerator_copy_log.csv` と `保存先を開く.url` が作成されます。CSVはExcelで直接開けるUTF-8 BOM形式で、処理結果、エラー分類、元／保存後パス、サイズ、保存先リンクを追記します。
 
 一覧の列見出しをクリックすると、その列で昇順・降順を切り替えられます。検索欄の左で対象列を選ぶと、指定列だけを部分一致で絞り込めます。列見出しを右クリックすると、並べ替え・絞り込み・列幅調整を選べます。一覧のファイルを右クリックすると、ファイルを開く、保存場所を開く、パスのコピー、整理コピー対象への追加、ファイル情報表示を利用できます。
 
@@ -148,9 +159,10 @@ target               Rust・Javaなどの生成物
 
 ## 操作マニュアル（PDF）
 
-- 最新版：[Directory Structure Generator Ver.2.8.1 操作マニュアル（PDF）](docs/DirectoryStructureGenerator_Ver2.8.1_操作マニュアル.pdf)
-- 編集用：[Directory Structure Generator Ver.2.8.1 操作マニュアル（PowerPoint）](docs/DirectoryStructureGenerator_Ver2.8.1_操作マニュアル.pptx)
-- 画面画像付きで、初回起動、設定プリセット、フィルター、列のソート、右クリック操作、メディア確認、整理コピー、ファイル名と拡張子の分離編集、安全設定を説明しています。
+- 現在の公開版：[Directory Structure Generator Ver.2.9.0 操作マニュアル](docs/DirectoryStructureGenerator_Ver2.9.0_操作マニュアル.pdf)
+- 編集用：[Directory Structure Generator Ver.2.9.0 操作マニュアル（PowerPoint）](docs/DirectoryStructureGenerator_Ver2.9.0_操作マニュアル.pptx)
+- 画面画像付きで、初回起動、列のソート・フィルター、右クリック操作、メディア確認、整理コピー、安全設定を説明しています。
+- Ver.2.9.0で追加した整理コピー結果の確認方法と、Excel用コピー結果CSVの見方も掲載しています。
 
 `START_APP.bat`はCMD画面を勝手に閉じません。起動に失敗した場合は、同じフォルダーの`startup_error.log`に原因を保存して画面にも表示します。
 
