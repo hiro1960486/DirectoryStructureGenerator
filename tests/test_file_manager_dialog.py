@@ -5,7 +5,10 @@ from pathlib import Path
 from PySide6.QtCore import QUrl
 
 from dsg_app.file_inspector import FileDetail
-from dsg_app.file_manager_dialog import FileManagerDialog, first_dropped_directory
+from dsg_app.file_manager_dialog import (
+    FileManagerDialog, copy_result_counts, first_dropped_directory,
+)
+from dsg_app.organizer import CopyPlan
 
 
 class DroppedDirectoryTests(unittest.TestCase):
@@ -39,6 +42,22 @@ class MediaTimeTests(unittest.TestCase):
     def test_formats_minutes_and_hours(self) -> None:
         self.assertEqual(FileManagerDialog.format_media_time(65_000), "01:05")
         self.assertEqual(FileManagerDialog.format_media_time(3_661_000), "01:01:01")
+
+
+class CopyResultCountTests(unittest.TestCase):
+    def test_counts_success_skip_failure_and_cancelled(self) -> None:
+        root = Path("C:/temporary")
+        plans = [
+            CopyPlan(root / "a", root / "out-a", "a", "コピー完了"),
+            CopyPlan(root / "b", root / "out-b", "b", "既存のためスキップ"),
+            CopyPlan(root / "c", root / "out-c", "c", "コピー失敗"),
+            CopyPlan(root / "d", root / "out-d", "d", "中止により未実行"),
+        ]
+
+        self.assertEqual(
+            copy_result_counts(plans),
+            {"success": 1, "skipped": 1, "failed": 1, "cancelled": 1},
+        )
 
 
 class NaturalSortTests(unittest.TestCase):
