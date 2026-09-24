@@ -21,17 +21,20 @@ from .settings_presets import (
 class PresetManagerDialog(QDialog):
     presetsChanged = Signal(object)
     presetApplied = Signal(object)
+    quickLimitChanged = Signal(int)
 
     def __init__(
         self,
         presets: list[dict[str, Any]],
         current_settings: Callable[[], dict[str, Any]],
         parent=None,
+        max_quick_presets: int = MAX_FAVORITES,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("設定プリセット管理")
         self.resize(820, 520)
-        self.presets = normalize_presets(presets)
+        self.max_quick_presets = max(1, min(99, int(max_quick_presets)))
+        self.presets = normalize_presets(presets, self.max_quick_presets)
         self.current_settings = current_settings
         self._updating = False
 
@@ -39,9 +42,17 @@ class PresetManagerDialog(QDialog):
         title = QLabel("設定プリセット")
         title.setStyleSheet("font-size:17pt;font-weight:700")
         layout.addWidget(title)
-        layout.addWidget(QLabel(
-            f"基本は1件、クイック表示は基本を含め最大{MAX_FAVORITES}件です。"
-        ))
+        limit_row = QHBoxLayout()
+        limit_row.addWidget(QLabel("基本は1件。クイック表示の上限（基本を含む）:"))
+        self.quick_limit_spin = QSpinBox()
+        self.quick_limit_spin.setRange(1, 99)
+        self.quick_limit_spin.setSuffix(" 件")
+        self.quick_limit_spin.setValue(self.max_quick_presets)
+        self.quick_limit_spin.setToolTip("メイン画面に表示できるクイック設定の最大数を指定します")
+        self.quick_limit_spin.valueChanged.connect(self._on_quick_limit_changed)
+        limit_row.addWidget(self.quick_limit_spin)
+        limit_row.addStretch()
+        layout.addLayout(limit_row)
 
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["基本", "クイック", "順番", "プリセット名", "メモ", "種類"])
@@ -101,7 +112,7 @@ class PresetManagerDialog(QDialog):
             self.table.setCellWidget(row, 0, self._centered(default))
             quick = QCheckBox()
             quick.setChecked(bool(preset.get("quick", preset.get("favorite", False))))
-            quick.setToolTip(f"メイン画面に表示します（最大{MAX_FAVORITES}件）")
+            quick.setToolTip(f"メイン画面に表示します（最大{self.max_quick_presets}件）")
             quick.stateChanged.connect(lambda state, index=row: self.toggle_favorite(index, state))
             self.table.setCellWidget(row, 1, self._centered(quick))
             order = QSpinBox()
@@ -157,8 +168,10 @@ class PresetManagerDialog(QDialog):
             QMessageBox.information(self, "基本プリセット", "基本プリセットはクイック表示から外せません。")
             self.refresh(self.presets[index]["name"])
             return
-        if enabled and sum(bool(item.get("quick")) for item in self.presets) >= MAX_FAVORITES:
-            QMessageBox.information(self, "クイック表示", f"クイック表示は最大{MAX_FAVORITES}件です。")
+        if enabled and sum(bool(item.get("quick")) for item in self.presets) >= self.max_quick_presets:
+            QMessageBox.information(
+                self, "クイック表示", f"クイック表示は最大{self.max_quick_presets}件です。"
+            )
             self.refresh(self.presets[index]["name"])
             return
         self.presets[index]["quick"] = enabled
@@ -270,7 +283,7 @@ class PresetManagerDialog(QDialog):
         if not filename:
             return
         try:
-            export_presets_csv(Path(filename), self.presets)
+            export_presets_csv(Path(filename), self.presets, self.max_quick_presets)
         except OSError as exc:
             QMessageBox.critical(self, "CSV保存エラー", str(exc))
             return
@@ -281,7 +294,7 @@ class PresetManagerDialog(QDialog):
         if not filename:
             return
         try:
-            incoming = import_presets_csv(Path(filename))
+            incoming = import_presets_csv(Path(filename), self.max_quick_presets)
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "CSV読み込みエラー", str(exc))
             return
@@ -290,10 +303,28 @@ class PresetManagerDialog(QDialog):
             f"{len(incoming)}件を読み込みます。\n同名プリセットはCSVの内容で更新します。よろしいですか？",
         ) != QMessageBox.StandardButton.Yes:
             return
-        self.presets = merge_presets(self.presets, incoming)
+        self.presets = merge_presets(self.presets, incoming, self.max_quick_presets)
         self.refresh()
         self._changed()
 
     def _changed(self) -> None:
-        self.presets = normalize_presets(self.presets)
+        self.presets = normalize_presets(self.presets, self.max_quick_presets)
         self.presetsChanged.emit(self.presets)
+
+    def _on_quick_limit_changed(self, value: int) -> None:
+        self.max_quick_presets = max(1, min(99, int(value)))
+        self.quickLimitChanged.emit(self.max_quick_presets)
+        self.presets = normalize_presets(self.presets, self.max_quick_presets)
+        # Treat the selected limit as the desired number of quick presets.
+        # Raising it should make additional presets appear without requiring
+        # users to discover and check each row manually.
+        quick_count = sum(bool(item.get("quick")) for item in self.presets)
+        for item in self.presets:
+            if quick_count >= self.max_quick_presets:
+                break
+            if not item.get("quick"):
+                item["quick"] = True
+                item["favorite"] = True
+                quick_count += 1
+        self.refresh()
+        self._changed()
