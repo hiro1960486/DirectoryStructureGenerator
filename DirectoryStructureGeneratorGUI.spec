@@ -1,15 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 hiddenimports = collect_submodules('hachoir')
+openpyxl_datas, openpyxl_binaries, openpyxl_hiddenimports = collect_all('openpyxl')
+hiddenimports += openpyxl_hiddenimports
 
 
 a = Analysis(
     ['app.py'],
     pathex=[],
-    binaries=[],
-    datas=[],
+    binaries=openpyxl_binaries,
+    datas=[('DirectoryStructureGenerator_AppIcon.ico', '.')] + openpyxl_datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -26,6 +28,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='DirectoryStructureGeneratorGUI',
+    icon='DirectoryStructureGenerator_AppIcon.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
