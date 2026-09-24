@@ -1,7 +1,7 @@
 """Modern PySide6 user interface.
 
-Version: 2.8.1
-Updated: 2026-09-23
+Version: 2.9.0
+Updated: 2026-09-24
 Author: hiro1960
 """
 
@@ -226,18 +226,17 @@ class MainWindow(QMainWindow):
         favorites = QHBoxLayout()
         favorites.addWidget(QLabel("よく使う設定"))
         self.favorite_preset_buttons: list[QPushButton] = []
-        for _ in range(5):
-            button = QPushButton()
-            button.setObjectName("filterChip")
-            button.setVisible(False)
-            button.clicked.connect(
-                lambda _checked=False, target=button: self.apply_settings_preset(
-                    str(target.property("presetName") or "")
-                )
-            )
-            self.favorite_preset_buttons.append(button)
-            favorites.addWidget(button)
-        favorites.addStretch()
+        self.favorite_buttons_host = QWidget()
+        self.favorite_buttons_layout = QHBoxLayout(self.favorite_buttons_host)
+        self.favorite_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        self.favorite_buttons_layout.setSpacing(6)
+        self.favorite_buttons_scroll = QScrollArea()
+        self.favorite_buttons_scroll.setWidgetResizable(False)
+        self.favorite_buttons_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.favorite_buttons_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.favorite_buttons_scroll.setFixedHeight(46)
+        self.favorite_buttons_scroll.setWidget(self.favorite_buttons_host)
+        favorites.addWidget(self.favorite_buttons_scroll, 1)
         preset_layout.addLayout(favorites)
         outer.addWidget(preset_group)
 
@@ -548,7 +547,10 @@ class MainWindow(QMainWindow):
         values = self.config.get("settings_presets", builtin_presets())
         if not isinstance(values, list):
             values = builtin_presets()
-        return normalize_presets(item for item in values if isinstance(item, dict))
+        limit = max(1, min(99, int(self.config.get("max_quick_presets", 5))))
+        return normalize_presets(
+            (item for item in values if isinstance(item, dict)), limit
+        )
 
     def refresh_settings_presets(self) -> None:
         presets = self.settings_presets()
@@ -564,7 +566,21 @@ class MainWindow(QMainWindow):
         favorites = sorted(
             (item for item in presets if item.get("quick", item.get("favorite"))),
             key=lambda item: (int(item.get("order", 999)), str(item["name"]).casefold()),
-        )[:5]
+        )[:max(1, min(99, int(self.config.get("max_quick_presets", 5))))]
+        while len(self.favorite_preset_buttons) < len(favorites):
+            button = QPushButton()
+            button.setObjectName("filterChip")
+            button.clicked.connect(
+                lambda _checked=False, target=button: self.apply_settings_preset(
+                    str(target.property("presetName") or "")
+                )
+            )
+            self.favorite_buttons_layout.addWidget(button)
+            self.favorite_preset_buttons.append(button)
+        while len(self.favorite_preset_buttons) > len(favorites):
+            button = self.favorite_preset_buttons.pop()
+            self.favorite_buttons_layout.removeWidget(button)
+            button.deleteLater()
         for index, button in enumerate(self.favorite_preset_buttons):
             if index < len(favorites):
                 name = str(favorites[index]["name"])
@@ -574,6 +590,7 @@ class MainWindow(QMainWindow):
                 button.setVisible(True)
             else:
                 button.setVisible(False)
+        self.favorite_buttons_host.adjustSize()
         if hasattr(self, "update_settings_preset_button"):
             self._refresh_preset_save_state()
 
@@ -695,17 +712,31 @@ class MainWindow(QMainWindow):
             )
 
     def show_preset_manager(self) -> None:
-        dialog = PresetManagerDialog(self.settings_presets(), self.current_settings_snapshot, self)
+        dialog = PresetManagerDialog(
+            self.settings_presets(), self.current_settings_snapshot,
+            self, max_quick_presets=int(self.config.get("max_quick_presets", 5)),
+        )
         dialog.presetsChanged.connect(self.update_settings_presets)
+        dialog.quickLimitChanged.connect(self.update_quick_preset_limit)
         dialog.presetApplied.connect(lambda value: self.apply_settings_preset(str(value.get("name", ""))))
         dialog.exec()
+
+    @Slot(int)
+    def update_quick_preset_limit(self, value: int) -> None:
+        self.config["max_quick_presets"] = max(1, min(99, int(value)))
+        self.refresh_settings_presets()
+        try:
+            save_config(self.config)
+        except OSError as exc:
+            QMessageBox.critical(self, "設定保存エラー", str(exc))
 
     @Slot(object)
     def update_settings_presets(self, values: object) -> None:
         if not isinstance(values, list):
             return
         self.config["settings_presets"] = normalize_presets(
-            item for item in values if isinstance(item, dict)
+            (item for item in values if isinstance(item, dict)),
+            max(1, min(99, int(self.config.get("max_quick_presets", 5)))),
         )
         self.refresh_settings_presets()
         try:
