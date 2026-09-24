@@ -1,11 +1,19 @@
+import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+if sys.platform != "win32":
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import QApplication
 
 from dsg_app.settings_presets import (
     MAX_FAVORITES, builtin_presets, export_presets_csv, import_presets_csv,
     merge_presets, normalize_presets,
 )
+from dsg_app.preset_dialog import PresetManagerDialog
 
 
 class SettingsPresetTests(unittest.TestCase):
@@ -23,6 +31,38 @@ class SettingsPresetTests(unittest.TestCase):
             item["favorite"] = True
         normalized = normalize_presets(presets)
         self.assertEqual(sum(bool(item["favorite"]) for item in normalized), MAX_FAVORITES)
+
+    def test_normalize_accepts_user_selected_quick_limit(self) -> None:
+        presets = builtin_presets()
+        for index in range(8):
+            presets.append(dict(presets[0], name=f"ユーザー設定{index + 1}",
+                                builtin=False, default=False, quick=True, favorite=True,
+                                order=len(presets) + 1))
+        normalized = normalize_presets(presets, max_favorites=8)
+        self.assertEqual(sum(bool(item["quick"]) for item in normalized), 8)
+        self.assertEqual(sum(bool(item["default"]) for item in normalized), 1)
+
+    def test_preset_manager_limit_control_accepts_custom_number(self) -> None:
+        app = QApplication.instance() or QApplication([])
+        dialog = PresetManagerDialog(builtin_presets(), lambda: {})
+        changed: list[int] = []
+        dialog.quickLimitChanged.connect(changed.append)
+        dialog.quick_limit_spin.setValue(8)
+        self.assertEqual(dialog.max_quick_presets, 8)
+        self.assertEqual(changed[-1], 8)
+        dialog.close()
+
+    def test_increasing_quick_limit_adds_more_presets_automatically(self) -> None:
+        app = QApplication.instance() or QApplication([])
+        dialog = PresetManagerDialog(builtin_presets(), lambda: {}, max_quick_presets=5)
+        self.assertEqual(sum(bool(item["quick"]) for item in dialog.presets), 5)
+        dialog.quick_limit_spin.setValue(6)
+        self.assertEqual(sum(bool(item["quick"]) for item in dialog.presets), 6)
+        dialog.quick_limit_spin.setValue(3)
+        self.assertEqual(sum(bool(item["quick"]) for item in dialog.presets), 3)
+        dialog.quick_limit_spin.setValue(6)
+        self.assertEqual(sum(bool(item["quick"]) for item in dialog.presets), 6)
+        dialog.close()
 
     def test_default_is_always_quick_and_only_one_default_exists(self) -> None:
         presets = builtin_presets()
