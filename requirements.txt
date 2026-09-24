@@ -1,3 +1,4 @@
 PySide6>=6.8,<7
 Pillow>=10.4,<13
 hachoir>=3.3,<4
+openpyxl>=3.1,<4
