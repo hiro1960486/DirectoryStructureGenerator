@@ -2,6 +2,7 @@
 
 - [Directory Structure Generator Ver.2.9.0 操作マニュアル（PDF・現在版）](DirectoryStructureGenerator_Ver2.9.0_操作マニュアル.pdf)
 - [Directory Structure Generator Ver.2.9.0 操作マニュアル（PowerPoint・編集用）](DirectoryStructureGenerator_Ver2.9.0_操作マニュアル.pptx)
+- [Ver.2.9.0 受け入れテスト結果（CSV）](Ver2.9.0_ACCEPTANCE_TEST_RESULTS.csv)
 - [Directory Structure Generator Ver.2.8.1 操作マニュアル（PDF・旧版）](DirectoryStructureGenerator_Ver2.8.1_操作マニュアル.pdf)
 - [Directory Structure Generator Ver.2.8.1 操作マニュアル（PowerPoint・旧版）](DirectoryStructureGenerator_Ver2.8.1_操作マニュアル.pptx)
 - [Directory Structure Generator Ver.2.6.0 操作マニュアル（PDF・旧版）](DirectoryStructureGenerator_Ver2.6.0_操作マニュアル.pdf)
@@ -14,3 +15,5 @@ Ver.2.9.0の追加ページでは、整理コピー後の成功・スキップ�
 PDFはGitHub上でそのまま表示でき、右上のダウンロードボタンから保存できます。
 
 整理コピー機能では、エクスプローラーからコピー先フォルダーを「2. 整理コピー」画面またはコピー先入力欄へドラッグ＆ドロップして指定できます。ドロップだけではコピーは開始されず、「コピー内容を事前確認」で内容を確認した後に実行します。
+
+選定済みのアプリアイコンを操作マニュアルの表紙とWindows EXEに使用しています。整理コピー画面では、コピー計画表の5列が画面幅に合わせて伸縮します。
