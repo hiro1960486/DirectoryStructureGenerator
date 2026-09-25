@@ -111,8 +111,10 @@ class IntegratedCopyCsvTests(unittest.TestCase):
         self.assertEqual(sheet.max_row, 2)
         self.assertEqual(sheet.cell(2, 3).value, "コピー完了")
         self.assertEqual(sheet.cell(2, 15).value, "保存先を開く")
-        self.assertIn(str(self.destination), sheet.cell(2, 15).hyperlink.target)
-        self.assertIn("写真.xlsx", sheet.cell(2, 16).hyperlink.target)
+        self.assertTrue(os.path.samefile(sheet.cell(2, 15).hyperlink.target, self.destination))
+        self.assertTrue(os.path.samefile(
+            sheet.cell(2, 16).hyperlink.target, self.destination / "写真.xlsx"
+        ))
 
         _, second_plan = self.make_plan("二枚目.txt")
         execute_copy_plans(second_plan, self.destination, output_format="xlsx")
