@@ -20,12 +20,14 @@ def config_path() -> Path:
 def default_config() -> dict[str, Any]:
     return {
         "config_version": 3, "app_version": APP_VERSION, "theme": "dark",
+        "max_quick_presets": 5,
         "source": "", "output": "", "source_history": [], "output_history": [],
         "organizer_destinations": [],
         "organizer": {
             "default_destination": "", "naming_template": "{name}",
             "custom_template": "{name}", "keep_subfolders": True,
-            "collision": "number",
+            "collision": "number", "result_log_directory": "", "result_format": "csv",
+            "result_history_mode": "append",
         },
         "formats": {"txt": True, "html": True, "csv": True, "json": False},
         "filters": FilterSettings().to_dict(), "preset": "開発用おすすめ",
@@ -49,10 +51,13 @@ def load_config() -> dict[str, Any]:
         pass
     try:
         values = defaults.get("settings_presets", builtin_presets())
+        limit = max(1, min(99, int(defaults.get("max_quick_presets", 5))))
+        defaults["max_quick_presets"] = limit
         defaults["settings_presets"] = normalize_presets(
-            item for item in values if isinstance(item, dict)
+            (item for item in values if isinstance(item, dict)), limit
         ) if isinstance(values, list) else builtin_presets()
     except (ValueError, TypeError):
+        defaults["max_quick_presets"] = 5
         defaults["settings_presets"] = builtin_presets()
     return defaults
 

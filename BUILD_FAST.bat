@@ -1,6 +1,5 @@
 @echo off
 setlocal
-cd /d "%~dp0"
 title Directory Structure Generator - Fast Test Build
 
 echo ============================================================

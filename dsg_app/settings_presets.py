@@ -111,7 +111,7 @@ def normalize_preset(value: dict[str, Any]) -> dict[str, Any]:
     safe_organizer = {
         key: organizer[key] for key in (
             "default_destination", "naming_template", "custom_template",
-            "keep_subfolders", "collision",
+            "keep_subfolders", "collision", "result_log_directory",
         ) if key in organizer
     }
     return {
@@ -131,7 +131,10 @@ def normalize_preset(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def normalize_presets(values: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def normalize_presets(
+    values: Iterable[dict[str, Any]], max_favorites: int = MAX_FAVORITES,
+) -> list[dict[str, Any]]:
+    max_favorites = max(1, int(max_favorites))
     result: list[dict[str, Any]] = []
     names: set[str] = set()
     for raw in values:
@@ -149,7 +152,7 @@ def normalize_presets(values: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         result[default_index]["quick"] = True
     allowed_quick = {default_index}
     for i, item in enumerate(result):
-        if i != default_index and item["quick"] and len(allowed_quick) < MAX_FAVORITES:
+        if i != default_index and item["quick"] and len(allowed_quick) < max_favorites:
             allowed_quick.add(i)
     for i, item in enumerate(result):
         item["quick"] = i in allowed_quick
@@ -157,7 +160,9 @@ def normalize_presets(values: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
-def export_presets_csv(path: Path, presets: Iterable[dict[str, Any]]) -> None:
+def export_presets_csv(
+    path: Path, presets: Iterable[dict[str, Any]], max_favorites: int = MAX_FAVORITES,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=CSV_FIELDS)
@@ -177,7 +182,7 @@ def export_presets_csv(path: Path, presets: Iterable[dict[str, Any]]) -> None:
             })
 
 
-def import_presets_csv(path: Path) -> list[dict[str, Any]]:
+def import_presets_csv(path: Path, max_favorites: int = MAX_FAVORITES) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
@@ -204,11 +209,14 @@ def import_presets_csv(path: Path) -> list[dict[str, Any]]:
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 raise ValueError(f"CSV {line_number}行目: {exc}") from exc
             result.append(item)
-    return normalize_presets(result)
+    return normalize_presets(result, max_favorites)
 
 
-def merge_presets(existing: Iterable[dict[str, Any]], incoming: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    merged = normalize_presets(existing)
+def merge_presets(
+    existing: Iterable[dict[str, Any]], incoming: Iterable[dict[str, Any]],
+    max_favorites: int = MAX_FAVORITES,
+) -> list[dict[str, Any]]:
+    merged = normalize_presets(existing, max_favorites)
     positions = {item["name"].casefold(): index for index, item in enumerate(merged)}
     for raw in incoming:
         item = normalize_preset(raw)
@@ -219,4 +227,4 @@ def merge_presets(existing: Iterable[dict[str, Any]], incoming: Iterable[dict[st
         else:
             positions[key] = len(merged)
             merged.append(item)
-    return normalize_presets(merged)
+    return normalize_presets(merged, max_favorites)

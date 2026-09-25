@@ -1,14 +1,21 @@
+import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+if sys.platform != "win32":
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtCore import QUrl, Qt
+from PySide6.QtWidgets import QApplication, QSplitter
 
 from dsg_app.file_inspector import FileDetail
 from dsg_app.file_manager_dialog import (
-    FileManagerDialog, copy_result_counts, first_dropped_directory,
+    FileManagerDialog, copy_plan_column_widths, copy_result_counts, first_dropped_directory,
 )
 from dsg_app.organizer import CopyPlan
+from dsg_app.models import FilterSettings
 
 
 class DroppedDirectoryTests(unittest.TestCase):
@@ -59,6 +66,96 @@ class CopyResultCountTests(unittest.TestCase):
             {"success": 1, "skipped": 1, "failed": 1, "cancelled": 1},
         )
 
+
+class CopyPlanColumnWidthTests(unittest.TestCase):
+    def test_widths_fill_normal_viewport_without_hidden_columns(self) -> None:
+        viewport = 1040
+        widths = copy_plan_column_widths(viewport)
+
+        self.assertEqual(len(widths), 5)
+        self.assertEqual(sum(widths), viewport - 2)
+        self.assertTrue(all(width > 0 for width in widths))
+
+    def test_small_viewport_uses_a_valid_width_distribution(self) -> None:
+        widths = copy_plan_column_widths(420)
+
+        self.assertEqual(len(widths), 5)
+        self.assertEqual(sum(widths), 418)
+        self.assertTrue(all(width > 0 for width in widths))
+
+
+class CopyResultButtonStateTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.output = self.root / "output"
+        self.output.mkdir()
+        self.dialog = FileManagerDialog(self.root, self.output, FilterSettings())
+
+    def tearDown(self) -> None:
+        self.dialog.close()
+        self.temp.cleanup()
+
+    def test_result_buttons_start_disabled(self) -> None:
+        self.assertFalse(self.dialog.open_copy_log_button.isEnabled())
+        self.assertFalse(self.dialog.open_copy_destination_button.isEnabled())
+        self.assertFalse(self.dialog.reveal_copied_file_button.isEnabled())
+
+    def test_dialog_has_standard_resize_controls(self) -> None:
+        flags = self.dialog.windowFlags()
+        self.assertTrue(flags & Qt.WindowType.WindowMinMaxButtonsHint)
+        self.assertGreaterEqual(self.dialog.height(), self.dialog.minimumHeight())
+
+    def test_result_file_format_defaults_to_csv_and_can_select_xlsx(self) -> None:
+        self.assertTrue(self.dialog.result_csv_radio.isChecked())
+        self.assertTrue(self.dialog.result_csv_radio.isCheckable())
+        self.dialog.result_xlsx_radio.click()
+        self.assertFalse(self.dialog.result_csv_radio.isChecked())
+        self.assertEqual(self.dialog._selected_result_format(), "xlsx")
+        self.assertEqual(self.dialog.organizer_settings["result_format"], "xlsx")
+
+    def test_result_history_mode_defaults_to_append_and_can_select_reset(self) -> None:
+        self.assertTrue(self.dialog.result_append_radio.isChecked())
+        self.dialog.result_reset_radio.click()
+        self.assertFalse(self.dialog.result_append_radio.isChecked())
+        self.assertEqual(self.dialog._selected_history_mode(), "reset")
+        self.assertEqual(self.dialog.organizer_settings["result_history_mode"], "reset")
+
+    def test_result_log_directory_is_editable_and_saved_in_settings(self) -> None:
+        history_path = self.root / "履歴"
+        self.dialog.result_directory_edit.setText(str(history_path))
+        self.assertEqual(self.dialog.organizer_settings["result_log_directory"], str(history_path))
+        self.dialog.save_organizer_defaults()
+        self.assertEqual(self.dialog.organizer_settings["result_log_directory"], str(history_path))
+
+    def test_organize_tab_has_visible_vertical_resize_handle(self) -> None:
+        splitter = self.dialog.findChild(QSplitter, "organizeResizeSplitter")
+        self.assertIsNotNone(splitter)
+        self.assertEqual(splitter.orientation(), Qt.Orientation.Vertical)
+        self.assertIn("ドラッグ", self.dialog.plan_resize_hint.text())
+
+    def test_csv_and_destination_enable_after_log_exists(self) -> None:
+        log_path = self.output / "_DirectoryStructureGenerator_copy_log.csv"
+        log_path.write_text("result\n", encoding="utf-8")
+        self.dialog.last_copy_log_path = log_path
+        self.dialog.last_copy_destination = self.output
+        self.dialog.update_copy_result_buttons()
+
+        self.assertTrue(self.dialog.open_copy_log_button.isEnabled())
+        self.assertTrue(self.dialog.open_copy_destination_button.isEnabled())
+        self.assertFalse(self.dialog.reveal_copied_file_button.isEnabled())
+
+    def test_reveal_button_enables_only_for_existing_success_file(self) -> None:
+        copied = self.output / "saved.txt"
+        copied.write_text("copy", encoding="utf-8")
+        self.dialog.last_copied_files = [copied]
+        self.dialog.update_copy_result_buttons()
+
+        self.assertTrue(self.dialog.reveal_copied_file_button.isEnabled())
 
 class NaturalSortTests(unittest.TestCase):
     def setUp(self) -> None:

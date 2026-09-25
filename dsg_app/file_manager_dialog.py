@@ -1,7 +1,7 @@
 """Popup UI for read-only inspection and safety-checked file organization.
 
 Version: 2.9.0
-Updated: 2026-09-24
+Updated: 2026-09-25
 Author: hiro1960
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QEvent, QItemSelectionModel, QObject, QProcess, QRect, QThread, Qt, QUrl, Signal, Slot,
+    QEvent, QItemSelectionModel, QObject, QProcess, QRect, QThread, QTimer, Qt, QUrl, Signal, Slot,
 )
 from PySide6.QtGui import (
     QCloseEvent, QDesktopServices, QDragEnterEvent, QDragMoveEvent, QDropEvent,
@@ -19,10 +19,10 @@ from PySide6.QtGui import (
 from PySide6.QtMultimedia import QAudioOutput, QMediaMetaData, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+    QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout,
     QFrame, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
-    QMenu, QMessageBox, QProgressBar, QPushButton, QSlider, QSplitter, QStackedWidget,
+    QMenu, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSlider, QSplitter, QStackedWidget,
     QStyle, QStyleOptionButton, QTabWidget, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
@@ -36,7 +36,7 @@ from .file_inspector import (
 )
 from .models import FilterSettings
 from .organizer import (
-    RESULT_LOG_NAME, CopyCancelled, CopyPlan, build_copy_plans, execute_copy_plans,
+    CopyCancelled, CopyPlan, build_copy_plans, copy_log_path, execute_copy_plans,
     extension_was_changed, rendered_name, sanitize_filename,
 )
 from .scanner import DirectoryScanner, ScanCancelled
@@ -58,6 +58,15 @@ def copy_result_counts(plans: list[CopyPlan]) -> dict[str, int]:
         else:
             counts["failed"] += 1
     return counts
+
+
+def copy_plan_column_widths(viewport_width: int) -> list[int]:
+    """Split the available plan-table width across all five visible columns."""
+    available = max(300, int(viewport_width) - 2)
+    ratios = (0.21, 0.21, 0.09, 0.36, 0.13)
+    widths = [int(available * ratio) for ratio in ratios]
+    widths[-1] += available - sum(widths)
+    return widths
 
 
 class SortableTableWidgetItem(QTableWidgetItem):
@@ -253,10 +262,15 @@ class CopyWorker(QObject):
 
     def __init__(
         self, plans: list[CopyPlan], destination: Path, delete_sources: bool = False,
+        output_format: str = "csv", history_mode: str = "append",
+        result_directory: Path | None = None,
     ) -> None:
         super().__init__()
         self.plans, self.destination = plans, destination
         self.delete_sources = delete_sources
+        self.output_format = output_format
+        self.history_mode = history_mode
+        self.result_directory = result_directory
         self._cancel = False
 
     @Slot()
@@ -266,6 +280,9 @@ class CopyWorker(QObject):
                 self.plans, self.destination, delete_sources=self.delete_sources,
                 cancel_requested=lambda: self._cancel,
                 progress=lambda current, total, path: self.progress.emit(current, total, path),
+                output_format=self.output_format,
+                history_mode=self.history_mode,
+                result_directory=self.result_directory,
             )
             self.finished.emit(result)
         except CopyCancelled:
@@ -345,11 +362,44 @@ class FileManagerDialog(QDialog):
         self.last_copy_log_path: Path | None = None
         self.last_copy_destination: Path | None = None
         self.last_copied_files: list[Path] = []
+        self._copy_output_format = str(self.organizer_settings.get("result_format", "csv"))
         self.setWindowTitle("ファイル詳細・整理コピー")
-        self.resize(1480, 860)
-        self.setMinimumSize(1080, 680)
+        # Show normal Windows title-bar controls and keep the dialog resizable.
+        self.setWindowFlags(
+            Qt.WindowType.Window
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.WindowMinMaxButtonsHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
+        screen = QApplication.primaryScreen()
+        if screen:
+            available = screen.availableGeometry()
+            width = min(1480, max(760, available.width() - 40))
+            height = min(860, max(420, available.height() - 60))
+        else:
+            width, height = 1480, 860
+        self.resize(width, height)
+        self.setMinimumSize(min(1080, width), min(520, height))
         self.setModal(True)
         self._build_ui()
+        QTimer.singleShot(0, self._resize_plan_columns)
+
+    @staticmethod
+    def _style_choice_toggle(button: QPushButton) -> None:
+        """Show exclusive options as clear, selectable toggle-style buttons."""
+        button.setCheckable(True)
+        button.setMinimumHeight(34)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setObjectName("resultChoiceToggle")
+        button.setStyleSheet(
+            "QPushButton#resultChoiceToggle {"
+            "padding:5px 14px; border:1px solid #94a3b8; border-radius:6px;"
+            "background:#f8fafc; color:#334155; font-weight:500;}"
+            "QPushButton#resultChoiceToggle:hover:!checked {background:#e2e8f0;}"
+            "QPushButton#resultChoiceToggle:checked {"
+            "background:#2563eb; color:#ffffff; border-color:#1d4ed8; font-weight:700;}"
+        )
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
@@ -376,7 +426,8 @@ class FileManagerDialog(QDialog):
         self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.content_splitter.setChildrenCollapsible(False)
         self.content_splitter.addWidget(self.tabs)
-        self.content_splitter.addWidget(self._preview_panel())
+        self.preview_panel = self._preview_panel()
+        self.content_splitter.addWidget(self.preview_panel)
         self.content_splitter.setSizes([1080, 360])
         self.content_splitter.setStretchFactor(0, 1)
         self.content_splitter.setStretchFactor(1, 0)
@@ -593,13 +644,17 @@ class FileManagerDialog(QDialog):
         tab = FolderDropWidget()
         tab.folderDropped.connect(self.set_dropped_destination)
         layout = QVBoxLayout(tab)
+        settings_panel = QWidget()
+        settings_layout = QVBoxLayout(settings_panel)
+        settings_layout.setContentsMargins(0, 0, 0, 0)
         self.selection_label = QLabel("詳細画面でコピーしたいファイルを選択してください。")
         self.selection_label.setStyleSheet("font-weight:600")
-        layout.addWidget(self.selection_label)
+        settings_layout.addWidget(self.selection_label)
         form = QFormLayout()
         destination_row = QHBoxLayout()
         self.destination_combo = FolderDropComboBox()
         self.destination_combo.setEditable(True)
+        self._install_folder_context_menu(self.destination_combo.lineEdit())
         self.destination_combo.addItems(self.destination_history)
         default_destination = str(self.organizer_settings.get("default_destination", "")).strip()
         if default_destination:
@@ -645,9 +700,18 @@ class FileManagerDialog(QDialog):
         rule_help.setWordWrap(True)
         form.addRow("", rule_help)
         self.keep_subfolders = QCheckBox("元のサブフォルダー構成を維持する")
+        self.keep_subfolders.setToolTip(
+            "オン：コピー先にも元の下位フォルダーを作ります。オフ：選択ファイルをコピー先直下へ保存します。"
+        )
         self.keep_subfolders.setChecked(bool(self.organizer_settings.get("keep_subfolders", True)))
         self.keep_subfolders.toggled.connect(self.invalidate_copy_plan)
         form.addRow("", self.keep_subfolders)
+        subfolder_help = QLabel(
+            "オン：元のフォルダー分けをコピー先にも再現します。オフ：すべてコピー先直下に保存します。"
+        )
+        subfolder_help.setWordWrap(True)
+        subfolder_help.setStyleSheet("color:#64748b")
+        form.addRow("", subfolder_help)
         self.collision_combo = QComboBox()
         self.collision_combo.addItem("自動で連番を付ける（推奨）", "number")
         self.collision_combo.addItem("同名ファイルはスキップ", "skip")
@@ -665,7 +729,67 @@ class FileManagerDialog(QDialog):
         )
         self.source_action_warning.setWordWrap(True)
         form.addRow("", self.source_action_warning)
-        layout.addLayout(form)
+
+        format_row = QWidget()
+        format_layout = QHBoxLayout(format_row)
+        format_layout.setContentsMargins(0, 0, 0, 0)
+        self.result_format_group = QButtonGroup(self)
+        self.result_format_group.setExclusive(True)
+        self.result_csv_radio = QPushButton("CSV（.csv）")
+        self.result_xlsx_radio = QPushButton("Excelブック（.xlsx）")
+        self._style_choice_toggle(self.result_csv_radio)
+        self._style_choice_toggle(self.result_xlsx_radio)
+        self.result_format_group.addButton(self.result_csv_radio)
+        self.result_format_group.addButton(self.result_xlsx_radio)
+        saved_format = str(self.organizer_settings.get("result_format", "csv")).lower()
+        self.result_xlsx_radio.setChecked(saved_format == "xlsx")
+        self.result_csv_radio.setChecked(saved_format != "xlsx")
+        self.result_csv_radio.toggled.connect(self._on_result_format_changed)
+        format_layout.addWidget(self.result_csv_radio, 1)
+        format_layout.addWidget(self.result_xlsx_radio, 1)
+        format_layout.addStretch()
+        form.addRow("コピー結果ファイル", format_row)
+
+        history_row = QWidget()
+        history_layout = QHBoxLayout(history_row)
+        history_layout.setContentsMargins(0, 0, 0, 0)
+        self.result_history_group = QButtonGroup(self)
+        self.result_history_group.setExclusive(True)
+        self.result_append_radio = QPushButton("蓄積（履歴に追加）")
+        self.result_reset_radio = QPushButton("初期化（今回分だけ）")
+        self._style_choice_toggle(self.result_append_radio)
+        self._style_choice_toggle(self.result_reset_radio)
+        self.result_history_group.addButton(self.result_append_radio)
+        self.result_history_group.addButton(self.result_reset_radio)
+        saved_history_mode = str(self.organizer_settings.get("result_history_mode", "append")).lower()
+        self.result_reset_radio.setChecked(saved_history_mode == "reset")
+        self.result_append_radio.setChecked(saved_history_mode != "reset")
+        self.result_append_radio.toggled.connect(self._on_result_history_mode_changed)
+        history_layout.addWidget(self.result_append_radio, 1)
+        history_layout.addWidget(self.result_reset_radio, 1)
+        history_layout.addStretch()
+        form.addRow("記録方法", history_row)
+        self.result_directory_edit = QLineEdit(
+            str(self.organizer_settings.get("result_log_directory", ""))
+        )
+        self._install_folder_context_menu(self.result_directory_edit)
+        self.result_directory_edit.setPlaceholderText("未指定の場合はコピー先フォルダーに保存")
+        self.result_directory_edit.textChanged.connect(self._on_result_directory_changed)
+        result_directory_row = QWidget()
+        result_directory_layout = QHBoxLayout(result_directory_row)
+        result_directory_layout.setContentsMargins(0, 0, 0, 0)
+        result_directory_layout.addWidget(self.result_directory_edit, 1)
+        self.result_directory_browse_button = QPushButton("参照…")
+        self.result_directory_browse_button.clicked.connect(self.choose_result_directory)
+        result_directory_layout.addWidget(self.result_directory_browse_button)
+        form.addRow("結果履歴の保存先", result_directory_row)
+        history_help = QLabel(
+            "初期化を選ぶと、既存ファイルは日付付きの履歴ファイルへ退避してから今回分を記録します。"
+        )
+        history_help.setWordWrap(True)
+        history_help.setStyleSheet("color:#64748b")
+        form.addRow("", history_help)
+        settings_layout.addLayout(form)
 
         buttons = QHBoxLayout()
         self.plan_button = QPushButton("コピー内容を事前確認")
@@ -680,19 +804,19 @@ class FileManagerDialog(QDialog):
         buttons.addWidget(self.copy_button)
         buttons.addWidget(defaults_button)
         buttons.addStretch()
-        layout.addLayout(buttons)
+        settings_layout.addLayout(buttons)
 
         result_group = QGroupBox("前回の整理結果")
         result_layout = QVBoxLayout(result_group)
         self.copy_result_summary = QLabel("まだ整理コピーを実行していません。")
         self.copy_result_summary.setWordWrap(True)
-        self.copy_result_path = QLabel("結果CSV: ―")
+        self.copy_result_path = QLabel("結果ファイル: ―")
         self.copy_result_path.setWordWrap(True)
         self.copy_result_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         result_layout.addWidget(self.copy_result_summary)
         result_layout.addWidget(self.copy_result_path)
         result_buttons = QHBoxLayout()
-        self.open_copy_log_button = QPushButton("結果CSVを開く")
+        self.open_copy_log_button = QPushButton("結果ファイルを開く")
         self.open_copy_destination_button = QPushButton("保存先を開く")
         self.reveal_copied_file_button = QPushButton("保存後ファイルを表示")
         self.open_copy_log_button.clicked.connect(self.open_last_copy_log)
@@ -703,8 +827,13 @@ class FileManagerDialog(QDialog):
         result_buttons.addWidget(self.reveal_copied_file_button)
         result_buttons.addStretch()
         result_layout.addLayout(result_buttons)
-        layout.addWidget(result_group)
+        settings_layout.addWidget(result_group)
         self.update_copy_result_buttons()
+
+        settings_scroll = QScrollArea()
+        settings_scroll.setWidgetResizable(True)
+        settings_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        settings_scroll.setWidget(settings_panel)
 
         self.plan_table = QTableWidget(0, 5)
         self.plan_table.setHorizontalHeaderLabels(
@@ -719,21 +848,77 @@ class FileManagerDialog(QDialog):
         self.plan_table.setShowGrid(False)
         plan_header = self.plan_table.horizontalHeader()
         plan_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.plan_table.setColumnWidth(0, 310)
-        self.plan_table.setColumnWidth(1, 280)
-        self.plan_table.setColumnWidth(2, 120)
-        self.plan_table.setColumnWidth(3, 520)
-        self.plan_table.setColumnWidth(4, 160)
+        self._resize_plan_columns()
         self.plan_table.itemChanged.connect(self.on_plan_item_changed)
         self.plan_table.currentCellChanged.connect(self.update_preview_from_plan)
-        layout.addWidget(self.plan_table, 1)
+        resize_splitter = QSplitter(Qt.Orientation.Vertical)
+        resize_splitter.setObjectName("organizeResizeSplitter")
+        resize_splitter.setChildrenCollapsible(False)
+        resize_splitter.setStyleSheet(
+            "QSplitter#organizeResizeSplitter::handle:vertical {"
+            "height:12px; background:#cbd5e1; border-top:1px solid #94a3b8;"
+            "border-bottom:1px solid #94a3b8;}"
+            "QSplitter#organizeResizeSplitter::handle:vertical:hover {background:#60a5fa;}"
+        )
+        resize_splitter.addWidget(settings_scroll)
+        resize_splitter.addWidget(self.plan_table)
+        resize_splitter.setStretchFactor(0, 2)
+        resize_splitter.setStretchFactor(1, 3)
+        resize_splitter.setSizes([420, 300])
+        layout.addWidget(resize_splitter, 1)
+        self.plan_resize_hint = QLabel("↕ この境界を上下にドラッグすると、一覧の高さを変更できます")
+        self.plan_resize_hint.setStyleSheet("color:#64748b; padding:2px 4px")
+        layout.addWidget(self.plan_resize_hint)
         self.organize_warning = QLabel(
             "安全仕様：既定では元ファイルを保持します。コピー先が対象フォルダー内の場合は実行できません。"
-            "コピー結果はコピー先の _DirectoryStructureGenerator_copy_log.csv に記録します。"
+            "結果履歴は指定したフォルダーに保存できます。未指定の場合はコピー先に保存します。"
         )
         self.organize_warning.setWordWrap(True)
         layout.addWidget(self.organize_warning)
         return tab
+
+    def _install_folder_context_menu(self, widget: QLineEdit | None) -> None:
+        if widget is None:
+            return
+        widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        widget.customContextMenuRequested.connect(
+            lambda position, target=widget: self._show_folder_context_menu(target, position)
+        )
+
+    def _show_folder_context_menu(self, widget: QLineEdit, position) -> None:  # type: ignore[no-untyped-def]
+        menu = QMenu(widget)
+        undo = menu.addAction("元に戻す")
+        undo.setEnabled(widget.isUndoAvailable())
+        undo.triggered.connect(widget.undo)
+        redo = menu.addAction("やり直す")
+        redo.setEnabled(widget.isRedoAvailable())
+        redo.triggered.connect(widget.redo)
+        menu.addSeparator()
+        cut = menu.addAction("切り取り")
+        cut.setEnabled(widget.hasSelectedText())
+        cut.triggered.connect(widget.cut)
+        copy = menu.addAction("コピー")
+        copy.setEnabled(widget.hasSelectedText())
+        copy.triggered.connect(widget.copy)
+        paste = menu.addAction("貼り付け")
+        paste.setEnabled(bool(QApplication.clipboard().text()))
+        paste.triggered.connect(widget.paste)
+        select_all = menu.addAction("すべて選択")
+        select_all.triggered.connect(widget.selectAll)
+        menu.addSeparator()
+        open_folder = menu.addAction("参照先フォルダーを開く")
+        open_folder.setEnabled(bool(widget.text().strip()))
+        open_folder.triggered.connect(lambda: self._open_referenced_folder(widget.text()))
+        menu.exec(widget.mapToGlobal(position))
+
+    def _open_referenced_folder(self, value: str) -> None:
+        path = Path(value.strip()).expanduser()
+        if path.is_file():
+            path = path.parent
+        if not path.is_dir():
+            QMessageBox.information(self, "フォルダーを開く", "入力されたフォルダーが見つかりません。")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
 
     def start_inspection(self) -> None:
         if self.thread and self.thread.isRunning():
@@ -838,6 +1023,12 @@ class FileManagerDialog(QDialog):
         self.inspect_button.setEnabled(not running)
         self.plan_button.setEnabled(not running)
         self.copy_button.setEnabled(not running and self.copy_ready)
+        self.result_csv_radio.setEnabled(not running)
+        self.result_xlsx_radio.setEnabled(not running)
+        self.result_append_radio.setEnabled(not running)
+        self.result_reset_radio.setEnabled(not running)
+        self.result_directory_edit.setEnabled(not running)
+        self.result_directory_browse_button.setEnabled(not running)
         self.cancel_button.setEnabled(running)
         self.close_button.setEnabled(not running)
         if running and self._mode == "copy":
@@ -858,7 +1049,9 @@ class FileManagerDialog(QDialog):
     def show_copy_summary(self, plans: list[CopyPlan], cancelled: bool = False) -> None:
         destination_text = self.destination_combo.currentText().strip()
         destination = Path(destination_text).expanduser().resolve() if destination_text else None
-        log_path = destination / RESULT_LOG_NAME if destination else None
+        result_directory_text = self.result_directory_edit.text().strip()
+        log_root = Path(result_directory_text).expanduser().resolve() if result_directory_text else destination
+        log_path = copy_log_path(log_root, self._copy_output_format) if log_root else None
         counts = copy_result_counts(plans)
         self.last_copy_destination = destination
         self.last_copy_log_path = log_path if log_path and log_path.exists() else None
@@ -872,7 +1065,7 @@ class FileManagerDialog(QDialog):
             f"失敗 {counts['failed']:,}件 ｜ 未実行 {counts['cancelled']:,}件"
         )
         self.copy_result_path.setText(
-            f"結果CSV: {self.last_copy_log_path or '生成されませんでした'}"
+            f"結果ファイル: {self.last_copy_log_path or '生成されませんでした'}"
         )
         self.copy_result_path.setToolTip(str(self.last_copy_log_path or ""))
         self.update_copy_result_buttons()
@@ -884,7 +1077,7 @@ class FileManagerDialog(QDialog):
                 f"スキップ: {counts['skipped']:,}件\n"
                 f"失敗: {counts['failed']:,}件\n"
                 f"未実行: {counts['cancelled']:,}件\n\n"
-                f"結果CSV: {self.last_copy_log_path or '生成されませんでした'}",
+                f"結果ファイル: {self.last_copy_log_path or '生成されませんでした'}",
             )
 
     def update_copy_result_buttons(self) -> None:
@@ -904,7 +1097,7 @@ class FileManagerDialog(QDialog):
     def open_last_copy_log(self) -> None:
         path = self.last_copy_log_path
         if not path or not path.exists():
-            QMessageBox.warning(self, "結果CSV", "結果CSVが見つかりません。")
+            QMessageBox.warning(self, "結果ファイル", "結果ファイルが見つかりません。")
             self.update_copy_result_buttons()
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
@@ -1540,6 +1733,24 @@ class FileManagerDialog(QDialog):
     def _tab_changed(self, index: int) -> None:
         if index == 1:
             self.refresh_rename_table(preserve=True)
+        QTimer.singleShot(0, self._resize_plan_columns)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        super().resizeEvent(event)
+        self._resize_plan_columns()
+
+    def showEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        super().showEvent(event)
+        QTimer.singleShot(0, self._resize_plan_columns)
+
+    def _resize_plan_columns(self) -> None:
+        """Fit the copy-plan columns to the visible width and avoid a hidden status column."""
+        table = getattr(self, "plan_table", None)
+        if table is None:
+            return
+        widths = copy_plan_column_widths(table.viewport().width())
+        for column, width in enumerate(widths):
+            table.setColumnWidth(column, width)
 
     def update_preview_from_plan(self, *_args) -> None:  # type: ignore[no-untyped-def]
         """Keep the shared preview in sync with the selected organize-plan row."""
@@ -1730,8 +1941,37 @@ class FileManagerDialog(QDialog):
             "keep_subfolders": self.keep_subfolders.isChecked(),
             "collision": str(self.collision_combo.currentData()),
             "custom_extensions": list(self.custom_extensions),
+            "result_log_directory": self.result_directory_edit.text().strip(),
+            "result_format": self._selected_result_format(),
+            "result_history_mode": self._selected_history_mode(),
         }
         self.status_label.setText("現在の整理コピー設定を既定値として保存しました。")
+
+    def _selected_result_format(self) -> str:
+        return "xlsx" if self.result_xlsx_radio.isChecked() else "csv"
+
+    def _on_result_format_changed(self, *_args) -> None:
+        if not hasattr(self, "result_csv_radio"):
+            return
+        self.organizer_settings["result_format"] = self._selected_result_format()
+
+    def _selected_history_mode(self) -> str:
+        return "reset" if self.result_reset_radio.isChecked() else "append"
+
+    def _on_result_history_mode_changed(self, *_args) -> None:
+        if hasattr(self, "result_append_radio"):
+            self.organizer_settings["result_history_mode"] = self._selected_history_mode()
+
+    def _on_result_directory_changed(self, value: str) -> None:
+        self.organizer_settings["result_log_directory"] = value.strip()
+
+    def choose_result_directory(self) -> None:
+        initial = self.result_directory_edit.text().strip()
+        if not initial:
+            initial = self.destination_combo.currentText().strip() or str(self.output)
+        selected = QFileDialog.getExistingDirectory(self, "結果履歴の保存先を選択", initial)
+        if selected:
+            self.result_directory_edit.setText(selected)
 
     @Slot(str)
     def set_dropped_destination(self, folder: str) -> None:
@@ -1825,7 +2065,9 @@ class FileManagerDialog(QDialog):
             extension.setCurrentText(extension_text)
             self.connect_extension_combo(extension)
             destination = QTableWidgetItem(str(plan.destination))
+            destination.setToolTip(str(plan.destination))
             status = QTableWidgetItem(plan.status)
+            status.setToolTip(plan.error or plan.status)
             for item in (original, destination, status):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.plan_table.setItem(row, 0, original)
@@ -1844,10 +2086,29 @@ class FileManagerDialog(QDialog):
             if count >= 100 else ""
         )
         delete_sources = bool(self.source_action_combo.currentData())
+        output_format = self._selected_result_format()
+        history_mode = self._selected_history_mode()
+        result_directory_text = self.result_directory_edit.text().strip()
+        result_directory = (
+            Path(result_directory_text).expanduser().resolve() if result_directory_text else None
+        )
+        destination_text = self.destination_combo.currentText().strip()
+        planned_destination = Path(destination_text).expanduser().resolve() if destination_text else Path()
+        if history_mode == "reset":
+            active_log = copy_log_path(result_directory or planned_destination, output_format)
+            history_note = (
+                "既存ログは日付付きの履歴ファイルへ退避し、今回分で新規作成します。"
+                if active_log.exists() else "今回分だけを記録します。"
+            )
+        else:
+            history_note = "既存ログに今回の結果を追加します。"
+        log_format_label = "Excelブック（.xlsx）" if output_format == "xlsx" else "CSV（.csv）"
         if delete_sources:
             title = "最終確認：元ファイルを削除します"
             message = (
                 f"{count:,}件の計画を実行します。\n\n"
+                f"結果ファイル: {log_format_label}\n保存先: {result_directory or planned_destination}\n"
+                f"{history_note}\n\n"
                 "コピー成功後、コピー元とコピー先のサイズが一致した元ファイルを削除します。\n"
                 "この削除は元に戻せません。スキップ・コピー失敗・確認失敗の元ファイルは削除しません。"
                 f"{warning}\n\n本当に実行しますか？"
@@ -1856,19 +2117,32 @@ class FileManagerDialog(QDialog):
             title = "整理コピーの実行"
             message = (
                 f"{count:,}件の計画を実行します。\n元ファイルは保持されます。"
+                f"\n結果ファイル: {log_format_label}\n保存先: {result_directory or planned_destination}\n"
+                f"{history_note}"
                 f"{warning}\n\n実行しますか？"
             )
-        answer = QMessageBox.question(
-            self, title, message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+        confirmation = QMessageBox(
+            QMessageBox.Icon.Question, title, message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self,
         )
+        confirmation.setTextFormat(Qt.TextFormat.PlainText)
+        confirmation.setDefaultButton(QMessageBox.StandardButton.No)
+        confirmation.setStyleSheet("QLabel { min-width: 480px; max-width: 680px; }")
+        message_label = confirmation.findChild(QLabel, "qt_msgbox_label")
+        if message_label is not None:
+            message_label.setWordWrap(True)
+        answer = confirmation.exec()
         if answer != QMessageBox.StandardButton.Yes:
             return
         destination = Path(self.destination_combo.currentText().strip()).expanduser().resolve()
+        self._copy_output_format = output_format
         self.copy_ready = False
         self._start_worker(
-            CopyWorker(self.copy_plans, destination, delete_sources=delete_sources), "copy"
+            CopyWorker(
+                self.copy_plans, destination, delete_sources=delete_sources,
+                output_format=output_format, history_mode=history_mode,
+                result_directory=result_directory,
+            ), "copy"
         )
 
     def invalidate_copy_plan(self, *_args) -> None:  # type: ignore[no-untyped-def]
@@ -1893,7 +2167,8 @@ class OrganizerSettingsDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("整理コピーの既定設定")
-        self.resize(720, 340)
+        self.resize(760, 430)
+        self.settings = dict(settings)
         layout = QVBoxLayout(self)
         title = QLabel("整理コピーの既定設定")
         title.setStyleSheet("font-size:16pt;font-weight:700")
@@ -1907,6 +2182,7 @@ class OrganizerSettingsDialog(QDialog):
         destination_row = QHBoxLayout()
         self.destination = FolderDropComboBox()
         self.destination.setEditable(True)
+        self._install_folder_context_menu(self.destination.lineEdit())
         self.destination.addItems(destination_history)
         self.destination.setCurrentText(str(settings.get("default_destination", "")))
         browse = QPushButton("参照…")
@@ -1914,6 +2190,15 @@ class OrganizerSettingsDialog(QDialog):
         destination_row.addWidget(self.destination, 1)
         destination_row.addWidget(browse)
         form.addRow("既定のコピー先", destination_row)
+        result_row = QHBoxLayout()
+        self.result_directory = QLineEdit(str(settings.get("result_log_directory", "")))
+        self._install_folder_context_menu(self.result_directory)
+        self.result_directory.setPlaceholderText("空欄ならコピー先に保存")
+        result_row.addWidget(self.result_directory, 1)
+        result_browse = QPushButton("参照…")
+        result_browse.clicked.connect(self.choose_result_directory)
+        result_row.addWidget(result_browse)
+        form.addRow("結果履歴の保存先", result_row)
         self.naming = QComboBox()
         for label, template in FileManagerDialog.NAMING_PRESETS:
             self.naming.addItem(label, template)
@@ -1924,8 +2209,16 @@ class OrganizerSettingsDialog(QDialog):
         self.custom = QLineEdit(str(settings.get("custom_template", "{name}")))
         form.addRow("高度な命名ルール", self.custom)
         self.keep_subfolders = QCheckBox("元のサブフォルダー構成を維持する")
+        self.keep_subfolders.setToolTip(
+            "オン：コピー先にも元の下位フォルダーを作ります。オフ：選択ファイルをコピー先直下へ保存します。"
+        )
         self.keep_subfolders.setChecked(bool(settings.get("keep_subfolders", True)))
         form.addRow("", self.keep_subfolders)
+        subfolder_help = QLabel(
+            "オン：元のフォルダー分けをコピー先にも再現します。オフ：すべてコピー先直下に保存します。"
+        )
+        subfolder_help.setWordWrap(True)
+        form.addRow("", subfolder_help)
         self.collision = QComboBox()
         self.collision.addItem("自動で連番を付ける（推奨）", "number")
         self.collision.addItem("同名ファイルはスキップ", "skip")
@@ -1949,14 +2242,64 @@ class OrganizerSettingsDialog(QDialog):
         if selected:
             self.destination.setCurrentText(selected)
 
+    def _install_folder_context_menu(self, widget: QLineEdit | None) -> None:
+        if widget is None:
+            return
+        widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        widget.customContextMenuRequested.connect(
+            lambda position, target=widget: self._show_folder_context_menu(target, position)
+        )
+
+    def _show_folder_context_menu(self, widget: QLineEdit, position) -> None:  # type: ignore[no-untyped-def]
+        menu = QMenu(widget)
+        for label, action, enabled in (
+            ("元に戻す", widget.undo, widget.isUndoAvailable()),
+            ("やり直す", widget.redo, widget.isRedoAvailable()),
+        ):
+            item = menu.addAction(label)
+            item.setEnabled(enabled)
+            item.triggered.connect(action)
+        menu.addSeparator()
+        for label, action, enabled in (
+            ("切り取り", widget.cut, widget.hasSelectedText()),
+            ("コピー", widget.copy, widget.hasSelectedText()),
+            ("貼り付け", widget.paste, bool(QApplication.clipboard().text())),
+            ("すべて選択", widget.selectAll, bool(widget.text())),
+        ):
+            item = menu.addAction(label)
+            item.setEnabled(enabled)
+            item.triggered.connect(action)
+        menu.addSeparator()
+        open_folder = menu.addAction("参照先フォルダーを開く")
+        open_folder.setEnabled(bool(widget.text().strip()))
+        open_folder.triggered.connect(lambda: self._open_referenced_folder(widget.text()))
+        menu.exec(widget.mapToGlobal(position))
+
+    def _open_referenced_folder(self, value: str) -> None:
+        path = Path(value.strip()).expanduser()
+        if path.is_file():
+            path = path.parent
+        if not path.is_dir():
+            QMessageBox.information(self, "フォルダーを開く", "入力されたフォルダーが見つかりません。")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
+
+    def choose_result_directory(self) -> None:
+        initial = self.result_directory.text().strip() or self.destination.currentText().strip()
+        selected = QFileDialog.getExistingDirectory(self, "結果履歴の保存先", initial)
+        if selected:
+            self.result_directory.setText(selected)
+
     def update_custom_visibility(self, *_args) -> None:  # type: ignore[no-untyped-def]
         self.custom.setVisible(self.naming.currentData() == "__custom__")
 
     def values(self) -> dict[str, object]:
-        return {
+        self.settings.update({
             "default_destination": self.destination.currentText().strip(),
+            "result_log_directory": self.result_directory.text().strip(),
             "naming_template": str(self.naming.currentData()),
             "custom_template": self.custom.text().strip(),
             "keep_subfolders": self.keep_subfolders.isChecked(),
             "collision": str(self.collision.currentData()),
-        }
+        })
+        return self.settings

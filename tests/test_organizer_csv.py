@@ -1,8 +1,11 @@
 import csv
+import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
+from openpyxl import load_workbook
 
 from dsg_app.file_inspector import FileDetail
 from dsg_app.organizer import (
@@ -75,11 +78,119 @@ class IntegratedCopyCsvTests(unittest.TestCase):
         self.assertTrue(rows[0]["保存先を開く"].startswith("=HYPERLINK("))
         self.assertEqual(rows[0]["元サイズ"], "4")
         self.assertEqual(rows[0]["保存後サイズ"], "4")
-        self.assertTrue((self.destination / "保存先を開く.url").exists())
+        shortcut = self.destination / "保存先を開く.lnk"
+        fallback = self.destination / "保存先を開く.url"
+        self.assertTrue(shortcut.exists() or fallback.exists())
         self.assertTrue((self.destination / original.name).exists())
         raw = (self.destination / RESULT_LOG_NAME).read_bytes()
         self.assertTrue(raw.startswith(b"\xef\xbb\xbf"))
+        self.assertEqual(raw.count(b"\xef\xbb\xbf"), 1)
         self.assertIn(b"\r\n", raw)
+
+    def test_result_log_can_be_saved_outside_copy_destination(self):
+        _, plans = self.make_plan("整理対象.txt")
+        history_directory = self.root / "記録" / "履歴"
+        execute_copy_plans(plans, self.destination, result_directory=history_directory)
+
+        self.assertTrue((self.destination / "整理対象.txt").exists())
+        self.assertTrue(
+            (self.destination / "保存先を開く.lnk").exists()
+            or (self.destination / "保存先を開く.url").exists()
+        )
+        self.assertTrue((history_directory / RESULT_LOG_NAME).exists())
+        self.assertFalse((self.destination / RESULT_LOG_NAME).exists())
+
+    def test_xlsx_option_appends_native_workbook_with_path_links(self):
+        _, plans = self.make_plan("写真.xlsx")
+        execute_copy_plans(plans, self.destination, output_format="xlsx")
+
+        workbook_path = self.destination / "_DirectoryStructureGenerator_copy_log.xlsx"
+        self.assertTrue(workbook_path.exists())
+        workbook = load_workbook(workbook_path)
+        sheet = workbook["コピー結果"]
+        self.assertEqual(sheet.max_row, 2)
+        self.assertEqual(sheet.cell(2, 3).value, "コピー完了")
+        self.assertEqual(sheet.cell(2, 15).value, "保存先を開く")
+        self.assertTrue(os.path.samefile(sheet.cell(2, 15).hyperlink.target, self.destination))
+        self.assertTrue(os.path.samefile(
+            sheet.cell(2, 16).hyperlink.target, self.destination / "写真.xlsx"
+        ))
+
+        _, second_plan = self.make_plan("二枚目.txt")
+        execute_copy_plans(second_plan, self.destination, output_format="xlsx")
+        workbook = load_workbook(workbook_path)
+        self.assertEqual(workbook["コピー結果"].max_row, 3)
+
+        _, reset_plan = self.make_plan("三枚目.txt")
+        execute_copy_plans(reset_plan, self.destination, output_format="xlsx", history_mode="reset")
+        workbook = load_workbook(workbook_path)
+        self.assertEqual(workbook["コピー結果"].max_row, 2)
+        archives = list(self.destination.glob("*_history_*.xlsx"))
+        self.assertEqual(len(archives), 1)
+        archived = load_workbook(archives[0])
+        self.assertEqual(archived["コピー結果"].max_row, 3)
+
+    def test_csv_reset_archives_prior_history_and_keeps_only_current_run_active(self):
+        _, first_plan = self.make_plan("前回.txt")
+        execute_copy_plans(first_plan, self.destination)
+        _, second_plan = self.make_plan("今回.txt")
+        execute_copy_plans(second_plan, self.destination, history_mode="reset")
+
+        rows = self.read_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["元ファイル名"], "今回.txt")
+        archives = list(self.destination.glob("*_history_*.csv"))
+        self.assertEqual(len(archives), 1)
+        with archives[0].open("r", encoding="utf-8-sig", newline="") as handle:
+            archived_rows = list(csv.DictReader(handle))
+        self.assertEqual(len(archived_rows), 1)
+        self.assertEqual(archived_rows[0]["元ファイル名"], "前回.txt")
+
+    @unittest.skipUnless(os.name != "nt", "PowerShell shortcut creation is covered by Windows builds")
+    def test_windows_shortcut_uses_native_link_with_unicode_target(self):
+        from dsg_app import organizer
+
+        target = self.destination / "画像管理" / "写真"
+        with patch.object(organizer, "os", SimpleNamespace(name="nt", environ=os.environ, fspath=os.fspath)), patch.object(
+            organizer.subprocess, "run"
+        ) as run:
+            shortcut = organizer.create_destination_shortcut(target)
+
+        self.assertEqual(shortcut.name, "保存先を開く.lnk")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.kwargs["env"]["DSG_SHORTCUT_TARGET"], str(target.resolve()))
+
+    @unittest.skipUnless(os.name != "nt", "PowerShell shortcut fallback is covered by Windows builds")
+    def test_windows_shortcut_falls_back_to_url_when_com_is_unavailable(self):
+        from dsg_app import organizer
+
+        target = self.destination / "画像管理" / "写真"
+        with patch.object(organizer, "os", SimpleNamespace(name="nt", environ=os.environ, fspath=os.fspath)), patch.object(
+            organizer.subprocess, "run", side_effect=organizer.subprocess.CalledProcessError(1, "powershell")
+        ):
+            shortcut = organizer.create_destination_shortcut(target)
+
+        self.assertEqual(shortcut.name, "保存先を開く.url")
+        self.assertIn("file:///", shortcut.read_text(encoding="utf-8-sig"))
+
+    def test_three_japanese_files_are_logged_and_originals_are_kept(self):
+        names = ["写真 01.txt", "画像 二.txt", "資料 03.txt"]
+        originals = []
+        details = []
+        for name in names:
+            original = self.source / name
+            original.write_text("data", encoding="utf-8")
+            originals.append(original)
+            details.append(detail(original, name))
+        plans = build_copy_plans(details, self.destination, "{name}", False, "number")
+
+        execute_copy_plans(plans, self.destination)
+
+        rows = self.read_rows()
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(all(row["処理結果"] == "コピー完了" for row in rows))
+        self.assertTrue(all(path.exists() for path in originals))
+        self.assertTrue(all(plan.destination.exists() for plan in plans))
 
     def test_append_has_only_one_header(self):
         _, first = self.make_plan("first.txt")
@@ -103,6 +214,22 @@ class IntegratedCopyCsvTests(unittest.TestCase):
             "r", encoding="utf-8-sig", newline=""
         ) as handle:
             self.assertEqual(next(csv.reader(handle)), RESULT_COLUMNS)
+
+    def test_skip_result_is_written_without_overwriting_existing_file(self):
+        original, _ = self.make_plan("collision.txt")
+        self.destination.mkdir(parents=True)
+        existing = self.destination / original.name
+        existing.write_text("keep existing", encoding="utf-8")
+        plans = build_copy_plans(
+            [detail(original, original.name)], self.destination, "{name}", False, "skip"
+        )
+
+        execute_copy_plans(plans, self.destination)
+
+        row = self.read_rows()[0]
+        self.assertEqual(row["処理結果"], "既存のためスキップ")
+        self.assertEqual(existing.read_text(encoding="utf-8"), "keep existing")
+        self.assertTrue(original.exists())
 
     def test_error_row_is_written_and_source_is_kept(self):
         original, plans = self.make_plan("blocked.txt")
@@ -135,6 +262,22 @@ class IntegratedCopyCsvTests(unittest.TestCase):
         _, plans = self.make_plan("=SUM(A1).txt")
         execute_copy_plans(plans, self.destination)
         self.assertTrue(self.read_rows()[0]["元ファイル名"].startswith("'="))
+
+    def test_all_formula_prefixes_are_neutralized(self):
+        names = ["=formula.txt", "+formula.txt", "-formula.txt", "@formula.txt"]
+        details = []
+        for name in names:
+            original = self.source / name
+            original.write_text("data", encoding="utf-8")
+            details.append(detail(original, name))
+        plans = build_copy_plans(details, self.destination, "{name}", False, "number")
+
+        execute_copy_plans(plans, self.destination)
+
+        rows = self.read_rows()
+        self.assertEqual(
+            [row["元ファイル名"][0] for row in rows], ["'", "'", "'", "'"]
+        )
 
     def test_cancel_is_logged(self):
         original, plans = self.make_plan("cancel.txt")

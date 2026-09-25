@@ -6,7 +6,7 @@ on:
       version:
         description: Release tag such as v2.3.0
         required: true
-        default: v2.3.0
+        default: v2.9.0
 
 permissions:
   contents: write
@@ -39,6 +39,9 @@ jobs:
           $version = "${{ inputs.version }}".TrimStart('v')
           $zip = "DirectoryStructureGeneratorGUI_Ver${version}_Windows_x64.zip"
           Copy-Item README.md "dist/DirectoryStructureGeneratorGUI/README.md"
+          New-Item -ItemType Directory -Path "dist/DirectoryStructureGeneratorGUI/docs" -Force | Out-Null
+          Copy-Item "docs/DirectoryStructureGenerator_AppIcon_512.png" "dist/DirectoryStructureGeneratorGUI/docs/"
+          Copy-Item "docs/DirectoryStructureGenerator_Ver${version}_操作マニュアル.pdf" "dist/DirectoryStructureGeneratorGUI/docs/" -ErrorAction SilentlyContinue
           Compress-Archive -Path "dist/DirectoryStructureGeneratorGUI/*" -DestinationPath $zip -Force
           $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
           Set-Content -LiteralPath "$zip.sha256.txt" -Encoding utf8 -Value "$zip  $hash"
@@ -50,13 +53,15 @@ jobs:
         run: |
           $version = "${{ inputs.version }}".TrimStart('v')
           $zip = "DirectoryStructureGeneratorGUI_Ver${version}_Windows_x64.zip"
-          $assets = @($zip, "$zip.sha256.txt")
+          $assets = @($zip, "$zip.sha256.txt", "DirectoryStructureGenerator_AppIcon.ico", "docs/DirectoryStructureGenerator_AppIcon_512.png")
           $manual = "docs/DirectoryStructureGenerator_Ver${version}_操作マニュアル.pdf"
           if (Test-Path -LiteralPath $manual) {
             $assets += $manual
           } else {
             Write-Host "Ver.${version} manual is not available yet; publishing ZIP and SHA256 only."
           }
+          $editableManual = "docs/DirectoryStructureGenerator_Ver${version}_操作マニュアル.pptx"
+          if (Test-Path -LiteralPath $editableManual) { $assets += $editableManual }
           git tag "${{ inputs.version }}" 2>$null
           git push origin "${{ inputs.version }}"
           gh release create "${{ inputs.version }}" `

@@ -1,7 +1,7 @@
 """File organization with safe copy and Excel-friendly result reporting.
 
 Version: 2.9.0
-Updated: 2026-09-24
+Updated: 2026-09-25
 Author: hiro1960
 """
 
@@ -11,12 +11,16 @@ import csv
 import os
 import re
 import shutil
+import subprocess
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from urllib.parse import quote
+
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font
 
 from .file_inspector import FileDetail
 
@@ -26,6 +30,7 @@ WINDOWS_RESERVED = {
     *(f"LPT{i}" for i in range(1, 10)),
 }
 RESULT_LOG_NAME = "_DirectoryStructureGenerator_copy_log.csv"
+RESULT_XLSX_NAME = "_DirectoryStructureGenerator_copy_log.xlsx"
 RESULT_COLUMNS = [
     "実行ID", "実行日時", "処理結果", "エラー分類", "エラー詳細",
     "元ファイル名", "新ファイル名", "元フォルダー", "保存先フォルダー",
@@ -217,27 +222,59 @@ def _prepare_log_file(log_path: Path) -> bool:
     return True
 
 
-def append_copy_log(destination_root: Path, plans: list[CopyPlan]) -> Path:
+def copy_log_path(destination_root: Path, output_format: str = "csv") -> Path:
+    return destination_root / (RESULT_XLSX_NAME if output_format == "xlsx" else RESULT_LOG_NAME)
+
+
+def _archive_existing_log(path: Path) -> Path | None:
+    """Move a previous active log to a timestamped archive before initialization."""
+    if not path.exists():
+        return None
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    archive = path.with_name(f"{path.stem}_history_{stamp}{path.suffix}")
+    counter = 1
+    while archive.exists():
+        archive = path.with_name(f"{path.stem}_history_{stamp}_{counter}{path.suffix}")
+        counter += 1
+    path.replace(archive)
+    return archive
+
+
+def _copy_log_row(plan: CopyPlan, fallback_time: str) -> list[object]:
+    return [
+        plan.run_id, plan.executed_at or fallback_time, plan.status,
+        plan.error_code, plan.error, plan.source.name, plan.destination.name,
+        str(plan.source.parent), str(plan.destination.parent),
+        str(plan.source), str(plan.destination), plan.source_size,
+        plan.destination_size,
+        "はい" if plan.delete_source_requested else "いいえ",
+        excel_hyperlink(plan.destination.parent, "保存先を開く"),
+        excel_hyperlink(plan.destination, "保存後ファイルを開く"),
+        windows_file_uri(plan.destination.parent), windows_file_uri(plan.destination),
+    ]
+
+
+def append_copy_log(
+    destination_root: Path, plans: list[CopyPlan], output_format: str = "csv",
+    history_mode: str = "append",
+) -> Path:
     """Append an Excel-compatible UTF-8 BOM/CRLF result log."""
+    if output_format == "xlsx":
+        return append_copy_log_xlsx(destination_root, plans, history_mode)
     log_path = destination_root / RESULT_LOG_NAME
+    if history_mode == "reset":
+        _archive_existing_log(log_path)
     new_file = _prepare_log_file(log_path)
-    with log_path.open("a", encoding="utf-8-sig", newline="") as handle:
+    # Write the BOM only on first creation. Opening an existing file in append
+    # mode with utf-8-sig would insert another BOM at every later run.
+    encoding = "utf-8-sig" if new_file else "utf-8"
+    with log_path.open("a", encoding=encoding, newline="") as handle:
         writer = csv.writer(handle, dialect="excel", lineterminator="\r\n")
         if new_file:
             writer.writerow(RESULT_COLUMNS)
         fallback_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         for plan in plans:
-            row = [
-                plan.run_id, plan.executed_at or fallback_time, plan.status,
-                plan.error_code, plan.error, plan.source.name, plan.destination.name,
-                str(plan.source.parent), str(plan.destination.parent),
-                str(plan.source), str(plan.destination), plan.source_size,
-                plan.destination_size,
-                "はい" if plan.delete_source_requested else "いいえ",
-                excel_hyperlink(plan.destination.parent, "保存先を開く"),
-                excel_hyperlink(plan.destination, "保存後ファイルを開く"),
-                windows_file_uri(plan.destination.parent), windows_file_uri(plan.destination),
-            ]
+            row = _copy_log_row(plan, fallback_time)
             writer.writerow([
                 value if index in {14, 15} else _csv_text(value)
                 for index, value in enumerate(row)
@@ -245,14 +282,84 @@ def append_copy_log(destination_root: Path, plans: list[CopyPlan]) -> Path:
     return log_path
 
 
-def create_destination_shortcut(destination_root: Path) -> Path:
-    """Create a Windows Internet Shortcut beside the result CSV."""
+def append_copy_log_xlsx(
+    destination_root: Path, plans: list[CopyPlan], history_mode: str = "append",
+) -> Path:
+    """Append copy results to a native Excel workbook with working path links."""
     destination_root.mkdir(parents=True, exist_ok=True)
-    shortcut = destination_root / "保存先を開く.url"
-    shortcut.write_text(
-        "[InternetShortcut]\r\n" f"URL={windows_file_uri(destination_root)}\r\n",
-        encoding="utf-8-sig", newline="",
-    )
+    path = copy_log_path(destination_root, "xlsx")
+    if history_mode == "reset":
+        _archive_existing_log(path)
+    if path.exists():
+        workbook = load_workbook(path)
+        worksheet = workbook.active
+    else:
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "コピー結果"
+        worksheet.append(RESULT_COLUMNS)
+        worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = f"A1:R1"
+    fallback_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for plan in plans:
+        row = _copy_log_row(plan, fallback_time)
+        row[14] = "保存先を開く"
+        row[15] = "保存後ファイルを開く"
+        worksheet.append([_csv_text(value) for value in row])
+        excel_row = worksheet.max_row
+        for column, target in ((15, plan.destination.parent), (16, plan.destination)):
+            cell = worksheet.cell(excel_row, column)
+            cell.hyperlink = str(PureWindowsPath(target)) if _looks_windows_path(str(target)) else str(target.resolve())
+            cell.font = Font(color="0563C1", underline="single")
+    widths = [34, 20, 18, 18, 40, 28, 28, 36, 36, 60, 60, 16, 16, 18, 22, 28, 70, 70]
+    for index, width in enumerate(widths, start=1):
+        worksheet.column_dimensions[chr(64 + index)].width = width
+    worksheet.auto_filter.ref = worksheet.dimensions
+    workbook.save(path)
+    return path
+
+
+def create_destination_shortcut(destination_root: Path) -> Path:
+    """Create a Unicode-safe Windows shortcut beside the result CSV."""
+    destination_root.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        shortcut = destination_root / "保存先を開く.lnk"
+        script = (
+            "$shell = New-Object -ComObject WScript.Shell; "
+            "$link = $shell.CreateShortcut($env:DSG_SHORTCUT_PATH); "
+            "$link.TargetPath = $env:DSG_SHORTCUT_TARGET; "
+            "$link.WorkingDirectory = $env:DSG_SHORTCUT_TARGET; "
+            "$link.Save()"
+        )
+        environment = os.environ.copy()
+        environment["DSG_SHORTCUT_PATH"] = str(shortcut)
+        environment["DSG_SHORTCUT_TARGET"] = str(destination_root)
+        try:
+            subprocess.run(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-Command", script],
+                check=True, capture_output=True, text=True, env=environment,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            # Some Windows service environments do not register WScript.Shell.
+            # Keep the copy workflow usable with a portable Internet Shortcut.
+            if shortcut.exists():
+                shortcut.unlink()
+            shortcut = destination_root / "保存先を開く.url"
+            shortcut.write_text(
+                "[InternetShortcut]\r\n" f"URL={windows_file_uri(destination_root)}\r\n",
+                encoding="utf-8-sig", newline="",
+            )
+        else:
+            old_url = destination_root / "保存先を開く.url"
+            if old_url.exists():
+                old_url.unlink()
+    else:
+        # Keep the portable test/development artifact available on non-Windows hosts.
+        shortcut = destination_root / "保存先を開く.url"
+        shortcut.write_text(
+            "[InternetShortcut]\r\n" f"URL={windows_file_uri(destination_root)}\r\n",
+            encoding="utf-8-sig", newline="",
+        )
     return shortcut
 
 
@@ -262,10 +369,14 @@ def execute_copy_plans(
     delete_sources: bool = False,
     cancel_requested: Callable[[], bool] | None = None,
     progress: Callable[[int, int, str], None] | None = None,
+    output_format: str = "csv",
+    history_mode: str = "append",
+    result_directory: Path | None = None,
 ) -> list[CopyPlan]:
     cancel_requested = cancel_requested or (lambda: False)
     progress = progress or (lambda _current, _total, _path: None)
     destination_root = destination_root.expanduser().resolve()
+    log_root = result_directory.expanduser().resolve() if result_directory else destination_root
     run_id = uuid.uuid4().hex
     executed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     total = len(plans)
@@ -284,7 +395,8 @@ def execute_copy_plans(
                     remaining.delete_source_requested = delete_sources
                     remaining.source_size = _safe_stat_size(remaining.source)
             destination_root.mkdir(parents=True, exist_ok=True)
-            append_copy_log(destination_root, plans)
+            log_root.mkdir(parents=True, exist_ok=True)
+            append_copy_log(log_root, plans, output_format, history_mode)
             create_destination_shortcut(destination_root)
             raise CopyCancelled("整理コピーを中止しました。")
         progress(index, total, str(plan.source))
@@ -320,6 +432,7 @@ def execute_copy_plans(
             plan.error = str(exc)
             plan.destination_size = _safe_stat_size(plan.destination)
     destination_root.mkdir(parents=True, exist_ok=True)
-    append_copy_log(destination_root, plans)
+    log_root.mkdir(parents=True, exist_ok=True)
+    append_copy_log(log_root, plans, output_format, history_mode)
     create_destination_shortcut(destination_root)
     return plans
