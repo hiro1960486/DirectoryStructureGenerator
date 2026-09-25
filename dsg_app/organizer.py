@@ -1,7 +1,7 @@
 """File organization with safe copy and Excel-friendly result reporting.
 
 Version: 2.9.0
-Updated: 2026-09-24
+Updated: 2026-09-25
 Author: hiro1960
 """
 
@@ -334,13 +334,25 @@ def create_destination_shortcut(destination_root: Path) -> Path:
         environment = os.environ.copy()
         environment["DSG_SHORTCUT_PATH"] = str(shortcut)
         environment["DSG_SHORTCUT_TARGET"] = str(destination_root)
-        subprocess.run(
-            ["powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-Command", script],
-            check=True, capture_output=True, text=True, env=environment,
-        )
-        old_url = destination_root / "保存先を開く.url"
-        if old_url.exists():
-            old_url.unlink()
+        try:
+            subprocess.run(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-Command", script],
+                check=True, capture_output=True, text=True, env=environment,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            # Some Windows service environments do not register WScript.Shell.
+            # Keep the copy workflow usable with a portable Internet Shortcut.
+            if shortcut.exists():
+                shortcut.unlink()
+            shortcut = destination_root / "保存先を開く.url"
+            shortcut.write_text(
+                "[InternetShortcut]\r\n" f"URL={windows_file_uri(destination_root)}\r\n",
+                encoding="utf-8-sig", newline="",
+            )
+        else:
+            old_url = destination_root / "保存先を開く.url"
+            if old_url.exists():
+                old_url.unlink()
     else:
         # Keep the portable test/development artifact available on non-Windows hosts.
         shortcut = destination_root / "保存先を開く.url"
