@@ -12,5 +12,5 @@ This follow-up is limited to the requested UI corrections and GitHub access info
 
 ## Validation
 
-- `python -m unittest discover -s tests -p 'test_*.py'`: 69 tests passed before these UI follow-up changes; rerun before merging.
+- 42 non-GUI tests passed after these changes. The GUI test modules require PySide6, which is unavailable in the active runtime.
 - Windows EXE and Microsoft Excel checks require a Windows machine.
