@@ -171,6 +171,14 @@ class MainWindow(QMainWindow):
         about = QAction("このアプリについて", self)
         about.triggered.connect(self.show_about)
         toolbar.addAction(about)
+        github = QAction("GitHub 配布元", self)
+        github.setToolTip("公式リポジトリと配布ページをブラウザーで開きます")
+        github.triggered.connect(
+            lambda: QDesktopServices.openUrl(
+                QUrl("https://github.com/hiro1960486/DirectoryStructureGenerator/releases")
+            )
+        )
+        toolbar.addAction(github)
         toolbar.addSeparator()
         organizer_settings = QAction("⚙ 整理コピー設定", self)
         organizer_settings.triggered.connect(self.show_organizer_settings)
@@ -395,18 +403,24 @@ class MainWindow(QMainWindow):
             self.patterns, self.search_edit,
         ):
             if widget is not None:
-                self._install_japanese_context_menu(widget)
+                self._install_japanese_context_menu(
+                    widget,
+                    open_folder=widget in (self.source_combo.lineEdit(), self.output_combo.lineEdit()),
+                )
         self._add_shortcuts()
 
-    def _install_japanese_context_menu(self, widget: QLineEdit | QPlainTextEdit) -> None:
+    def _install_japanese_context_menu(
+        self, widget: QLineEdit | QPlainTextEdit, open_folder: bool = False
+    ) -> None:
         """Replace the platform's English edit menu with a Japanese one."""
         widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         widget.customContextMenuRequested.connect(
-            lambda position, target=widget: self._show_japanese_context_menu(target, position)
+            lambda position, target=widget, can_open=open_folder:
+                self._show_japanese_context_menu(target, position, can_open)
         )
 
     def _show_japanese_context_menu(
-        self, widget: QLineEdit | QPlainTextEdit, position
+        self, widget: QLineEdit | QPlainTextEdit, position, open_folder: bool = False
     ) -> None:  # type: ignore[no-untyped-def]
         is_line_edit = isinstance(widget, QLineEdit)
         selected = widget.hasSelectedText() if is_line_edit else widget.textCursor().hasSelection()
@@ -451,7 +465,21 @@ class MainWindow(QMainWindow):
         select_all_action.setShortcut(QKeySequence.SelectAll)
         select_all_action.setEnabled(bool(widget.text() if is_line_edit else widget.toPlainText()))
         select_all_action.triggered.connect(widget.selectAll)
+        if open_folder:
+            menu.addSeparator()
+            open_action = menu.addAction("参照先フォルダーを開く")
+            open_action.setEnabled(bool(widget.text().strip()))
+            open_action.triggered.connect(lambda: self._open_referenced_folder(widget.text()))
         menu.exec(widget.mapToGlobal(position))
+
+    def _open_referenced_folder(self, value: str) -> None:
+        path = Path(value.strip()).expanduser()
+        if path.is_file():
+            path = path.parent
+        if not path.is_dir():
+            QMessageBox.information(self, "フォルダーを開く", "入力されたフォルダーが見つかりません。")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
 
     @staticmethod
     def _delete_text_selection(widget: QLineEdit | QPlainTextEdit) -> None:
@@ -983,7 +1011,11 @@ class MainWindow(QMainWindow):
             f"{APP_NAME}\nVer.{APP_VERSION}\n\n更新日: {UPDATED}\n作者: {AUTHOR}\n\n"
             "フォルダー構成をフィルターして TXT / HTML / CSV / JSON に出力します。\n"
             "ファイル詳細・整理コピーでは、一般ファイルと画像の詳細確認、\n"
-            "元データを変更しない安全なコピー整理ができます。",
+            "元データを変更しない安全なコピー整理ができます。\n\n"
+            "ソース・更新情報：\n"
+            "https://github.com/hiro1960486/DirectoryStructureGenerator\n"
+            "公式配布ZIP：\n"
+            "https://github.com/hiro1960486/DirectoryStructureGenerator/releases",
         )
 
     def _save_ui_config(self) -> None:
