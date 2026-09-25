@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView,
     QInputDialog, QLabel, QMessageBox, QPushButton, QRadioButton, QSpinBox, QTableWidget, QTableWidgetItem,
@@ -58,7 +58,15 @@ class PresetManagerDialog(QDialog):
         self.table.setHorizontalHeaderLabels(["基本", "クイック", "順番", "プリセット名", "メモ", "種類"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+        )
+        self.table.setStyleSheet(
+            "QTableWidget::item:selected { background:#2563eb; color:white; }"
+            "QTableWidget::item:selected:!active { background:#3b82f6; color:white; }"
+        )
+        self.table.itemChanged.connect(self._on_cell_edited)
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
         for column in (0, 1, 2, 3, 5):
@@ -118,11 +126,21 @@ class PresetManagerDialog(QDialog):
             order = QSpinBox()
             order.setRange(1, 99)
             order.setValue(int(preset.get("order", row + 1)))
-            order.editingFinished.connect(lambda index=row, widget=order: self.set_order(index, widget.value()))
+            order.valueChanged.connect(lambda value, index=row: self.set_order(index, value))
             self.table.setCellWidget(row, 2, order)
-            self.table.setItem(row, 3, QTableWidgetItem(str(preset["name"])))
-            self.table.setItem(row, 4, QTableWidgetItem(str(preset.get("memo", ""))))
-            self.table.setItem(row, 5, QTableWidgetItem("標準" if preset.get("builtin") else "ユーザー"))
+            name_item = QTableWidgetItem(str(preset["name"]))
+            memo_item = QTableWidgetItem(str(preset.get("memo", "")))
+            if preset.get("builtin"):
+                name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                memo_item.setFlags(memo_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            else:
+                name_item.setToolTip("ダブルクリックして、この欄で名前を編集できます")
+                memo_item.setToolTip("ダブルクリックして、この欄でメモを編集できます")
+            self.table.setItem(row, 3, name_item)
+            self.table.setItem(row, 4, memo_item)
+            kind_item = QTableWidgetItem("標準" if preset.get("builtin") else "ユーザー")
+            kind_item.setFlags(kind_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, 5, kind_item)
             if preset["name"] == selected_name:
                 selected_row = row
         if self.presets:
@@ -154,7 +172,34 @@ class PresetManagerDialog(QDialog):
         name = self.presets[index]["name"]
         self.presets[index]["order"] = value
         self._changed()
-        self.refresh(name)
+        QTimer.singleShot(0, lambda selected_name=name: self.refresh(selected_name))
+
+    def _on_cell_edited(self, cell: QTableWidgetItem) -> None:
+        if self._updating or cell.column() not in (3, 4):
+            return
+        row = cell.row()
+        if not (0 <= row < len(self.presets)) or self.presets[row].get("builtin"):
+            return
+        old = self.presets[row]
+        value = cell.text().strip()
+        if cell.column() == 3:
+            if not value:
+                self.refresh(str(old["name"]))
+                QMessageBox.warning(self, "プリセット名", "名前を空欄にはできません。")
+                return
+            if any(
+                i != row and item["name"].casefold() == value.casefold()
+                for i, item in enumerate(self.presets)
+            ):
+                self.refresh(str(old["name"]))
+                QMessageBox.warning(self, "プリセット名", "同じ名前のプリセットがあります。")
+                return
+            old["name"] = value
+        else:
+            old["memo"] = value
+        selected_name = str(old["name"])
+        self._changed()
+        self.refresh(selected_name)
 
     def selected_index(self) -> int:
         rows = self.table.selectionModel().selectedRows()
