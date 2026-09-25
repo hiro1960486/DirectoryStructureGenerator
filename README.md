@@ -248,6 +248,13 @@ requirements-build.txt  ビルド・テスト用ライブラリ
 - 第三者版の動作保証、問い合わせ対応、損害への責任を原作者は負いません。
 - 公式配布物は、このリポジトリのGitHub Releasesで公開したものを基準とします。
 
+## GitHub リポジトリと公式配布
+
+- リポジトリ（ソースコード・更新履歴・Issue）：https://github.com/hiro1960486/DirectoryStructureGenerator
+- Releases（利用者向けWindows配布ZIP）：https://github.com/hiro1960486/DirectoryStructureGenerator/releases
+- 公式リリースから取得したZIPを使用してください。ソースから利用する場合は、READMEの開発環境手順を確認してください。
+- 不具合や改善案はGitHubのIssues、コード変更の提案はPull Requestから受け付けます。
+
 ## 注意事項
 
 - 本ツールの一覧・レポート機能はファイルを読み取り専用で調査します。
