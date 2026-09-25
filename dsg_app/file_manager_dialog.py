@@ -1,7 +1,7 @@
 """Popup UI for read-only inspection and safety-checked file organization.
 
 Version: 2.9.0
-Updated: 2026-09-24
+Updated: 2026-09-25
 Author: hiro1960
 """
 
