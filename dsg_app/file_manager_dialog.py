@@ -654,6 +654,7 @@ class FileManagerDialog(QDialog):
         destination_row = QHBoxLayout()
         self.destination_combo = FolderDropComboBox()
         self.destination_combo.setEditable(True)
+        self._install_folder_context_menu(self.destination_combo.lineEdit())
         self.destination_combo.addItems(self.destination_history)
         default_destination = str(self.organizer_settings.get("default_destination", "")).strip()
         if default_destination:
@@ -699,9 +700,18 @@ class FileManagerDialog(QDialog):
         rule_help.setWordWrap(True)
         form.addRow("", rule_help)
         self.keep_subfolders = QCheckBox("元のサブフォルダー構成を維持する")
+        self.keep_subfolders.setToolTip(
+            "オン：コピー先にも元の下位フォルダーを作ります。オフ：選択ファイルをコピー先直下へ保存します。"
+        )
         self.keep_subfolders.setChecked(bool(self.organizer_settings.get("keep_subfolders", True)))
         self.keep_subfolders.toggled.connect(self.invalidate_copy_plan)
         form.addRow("", self.keep_subfolders)
+        subfolder_help = QLabel(
+            "オン：元のフォルダー分けをコピー先にも再現します。オフ：すべてコピー先直下に保存します。"
+        )
+        subfolder_help.setWordWrap(True)
+        subfolder_help.setStyleSheet("color:#64748b")
+        form.addRow("", subfolder_help)
         self.collision_combo = QComboBox()
         self.collision_combo.addItem("自動で連番を付ける（推奨）", "number")
         self.collision_combo.addItem("同名ファイルはスキップ", "skip")
@@ -762,6 +772,7 @@ class FileManagerDialog(QDialog):
         self.result_directory_edit = QLineEdit(
             str(self.organizer_settings.get("result_log_directory", ""))
         )
+        self._install_folder_context_menu(self.result_directory_edit)
         self.result_directory_edit.setPlaceholderText("未指定の場合はコピー先フォルダーに保存")
         self.result_directory_edit.textChanged.connect(self._on_result_directory_changed)
         result_directory_row = QWidget()
@@ -865,6 +876,49 @@ class FileManagerDialog(QDialog):
         self.organize_warning.setWordWrap(True)
         layout.addWidget(self.organize_warning)
         return tab
+
+    def _install_folder_context_menu(self, widget: QLineEdit | None) -> None:
+        if widget is None:
+            return
+        widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        widget.customContextMenuRequested.connect(
+            lambda position, target=widget: self._show_folder_context_menu(target, position)
+        )
+
+    def _show_folder_context_menu(self, widget: QLineEdit, position) -> None:  # type: ignore[no-untyped-def]
+        menu = QMenu(widget)
+        undo = menu.addAction("元に戻す")
+        undo.setEnabled(widget.isUndoAvailable())
+        undo.triggered.connect(widget.undo)
+        redo = menu.addAction("やり直す")
+        redo.setEnabled(widget.isRedoAvailable())
+        redo.triggered.connect(widget.redo)
+        menu.addSeparator()
+        cut = menu.addAction("切り取り")
+        cut.setEnabled(widget.hasSelectedText())
+        cut.triggered.connect(widget.cut)
+        copy = menu.addAction("コピー")
+        copy.setEnabled(widget.hasSelectedText())
+        copy.triggered.connect(widget.copy)
+        paste = menu.addAction("貼り付け")
+        paste.setEnabled(bool(QApplication.clipboard().text()))
+        paste.triggered.connect(widget.paste)
+        select_all = menu.addAction("すべて選択")
+        select_all.triggered.connect(widget.selectAll)
+        menu.addSeparator()
+        open_folder = menu.addAction("参照先フォルダーを開く")
+        open_folder.setEnabled(bool(widget.text().strip()))
+        open_folder.triggered.connect(lambda: self._open_referenced_folder(widget.text()))
+        menu.exec(widget.mapToGlobal(position))
+
+    def _open_referenced_folder(self, value: str) -> None:
+        path = Path(value.strip()).expanduser()
+        if path.is_file():
+            path = path.parent
+        if not path.is_dir():
+            QMessageBox.information(self, "フォルダーを開く", "入力されたフォルダーが見つかりません。")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
 
     def start_inspection(self) -> None:
         if self.thread and self.thread.isRunning():
@@ -2067,11 +2121,17 @@ class FileManagerDialog(QDialog):
                 f"{history_note}"
                 f"{warning}\n\n実行しますか？"
             )
-        answer = QMessageBox.question(
-            self, title, message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+        confirmation = QMessageBox(
+            QMessageBox.Icon.Question, title, message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self,
         )
+        confirmation.setTextFormat(Qt.TextFormat.PlainText)
+        confirmation.setDefaultButton(QMessageBox.StandardButton.No)
+        confirmation.setStyleSheet("QLabel { min-width: 480px; max-width: 680px; }")
+        message_label = confirmation.findChild(QLabel, "qt_msgbox_label")
+        if message_label is not None:
+            message_label.setWordWrap(True)
+        answer = confirmation.exec()
         if answer != QMessageBox.StandardButton.Yes:
             return
         destination = Path(self.destination_combo.currentText().strip()).expanduser().resolve()
@@ -2122,6 +2182,7 @@ class OrganizerSettingsDialog(QDialog):
         destination_row = QHBoxLayout()
         self.destination = FolderDropComboBox()
         self.destination.setEditable(True)
+        self._install_folder_context_menu(self.destination.lineEdit())
         self.destination.addItems(destination_history)
         self.destination.setCurrentText(str(settings.get("default_destination", "")))
         browse = QPushButton("参照…")
@@ -2131,6 +2192,7 @@ class OrganizerSettingsDialog(QDialog):
         form.addRow("既定のコピー先", destination_row)
         result_row = QHBoxLayout()
         self.result_directory = QLineEdit(str(settings.get("result_log_directory", "")))
+        self._install_folder_context_menu(self.result_directory)
         self.result_directory.setPlaceholderText("空欄ならコピー先に保存")
         result_row.addWidget(self.result_directory, 1)
         result_browse = QPushButton("参照…")
@@ -2147,8 +2209,16 @@ class OrganizerSettingsDialog(QDialog):
         self.custom = QLineEdit(str(settings.get("custom_template", "{name}")))
         form.addRow("高度な命名ルール", self.custom)
         self.keep_subfolders = QCheckBox("元のサブフォルダー構成を維持する")
+        self.keep_subfolders.setToolTip(
+            "オン：コピー先にも元の下位フォルダーを作ります。オフ：選択ファイルをコピー先直下へ保存します。"
+        )
         self.keep_subfolders.setChecked(bool(settings.get("keep_subfolders", True)))
         form.addRow("", self.keep_subfolders)
+        subfolder_help = QLabel(
+            "オン：元のフォルダー分けをコピー先にも再現します。オフ：すべてコピー先直下に保存します。"
+        )
+        subfolder_help.setWordWrap(True)
+        form.addRow("", subfolder_help)
         self.collision = QComboBox()
         self.collision.addItem("自動で連番を付ける（推奨）", "number")
         self.collision.addItem("同名ファイルはスキップ", "skip")
@@ -2171,6 +2241,48 @@ class OrganizerSettingsDialog(QDialog):
         selected = QFileDialog.getExistingDirectory(self, "既定のコピー先", initial)
         if selected:
             self.destination.setCurrentText(selected)
+
+    def _install_folder_context_menu(self, widget: QLineEdit | None) -> None:
+        if widget is None:
+            return
+        widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        widget.customContextMenuRequested.connect(
+            lambda position, target=widget: self._show_folder_context_menu(target, position)
+        )
+
+    def _show_folder_context_menu(self, widget: QLineEdit, position) -> None:  # type: ignore[no-untyped-def]
+        menu = QMenu(widget)
+        for label, action, enabled in (
+            ("元に戻す", widget.undo, widget.isUndoAvailable()),
+            ("やり直す", widget.redo, widget.isRedoAvailable()),
+        ):
+            item = menu.addAction(label)
+            item.setEnabled(enabled)
+            item.triggered.connect(action)
+        menu.addSeparator()
+        for label, action, enabled in (
+            ("切り取り", widget.cut, widget.hasSelectedText()),
+            ("コピー", widget.copy, widget.hasSelectedText()),
+            ("貼り付け", widget.paste, bool(QApplication.clipboard().text())),
+            ("すべて選択", widget.selectAll, bool(widget.text())),
+        ):
+            item = menu.addAction(label)
+            item.setEnabled(enabled)
+            item.triggered.connect(action)
+        menu.addSeparator()
+        open_folder = menu.addAction("参照先フォルダーを開く")
+        open_folder.setEnabled(bool(widget.text().strip()))
+        open_folder.triggered.connect(lambda: self._open_referenced_folder(widget.text()))
+        menu.exec(widget.mapToGlobal(position))
+
+    def _open_referenced_folder(self, value: str) -> None:
+        path = Path(value.strip()).expanduser()
+        if path.is_file():
+            path = path.parent
+        if not path.is_dir():
+            QMessageBox.information(self, "フォルダーを開く", "入力されたフォルダーが見つかりません。")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
 
     def choose_result_directory(self) -> None:
         initial = self.result_directory.text().strip() or self.destination.currentText().strip()
