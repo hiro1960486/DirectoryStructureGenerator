@@ -2,6 +2,7 @@ import csv
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 from openpyxl import load_workbook
@@ -77,8 +78,9 @@ class IntegratedCopyCsvTests(unittest.TestCase):
         self.assertTrue(rows[0]["保存先を開く"].startswith("=HYPERLINK("))
         self.assertEqual(rows[0]["元サイズ"], "4")
         self.assertEqual(rows[0]["保存後サイズ"], "4")
-        suffix = ".lnk" if os.name == "nt" else ".url"
-        self.assertTrue((self.destination / f"保存先を開く{suffix}").exists())
+        shortcut = self.destination / "保存先を開く.lnk"
+        fallback = self.destination / "保存先を開く.url"
+        self.assertTrue(shortcut.exists() or fallback.exists())
         self.assertTrue((self.destination / original.name).exists())
         raw = (self.destination / RESULT_LOG_NAME).read_bytes()
         self.assertTrue(raw.startswith(b"\xef\xbb\xbf"))
@@ -91,8 +93,10 @@ class IntegratedCopyCsvTests(unittest.TestCase):
         execute_copy_plans(plans, self.destination, result_directory=history_directory)
 
         self.assertTrue((self.destination / "整理対象.txt").exists())
-        shortcut_suffix = ".lnk" if os.name == "nt" else ".url"
-        self.assertTrue((self.destination / f"保存先を開く{shortcut_suffix}").exists())
+        self.assertTrue(
+            (self.destination / "保存先を開く.lnk").exists()
+            or (self.destination / "保存先を開く.url").exists()
+        )
         self.assertTrue((history_directory / RESULT_LOG_NAME).exists())
         self.assertFalse((self.destination / RESULT_LOG_NAME).exists())
 
@@ -145,7 +149,7 @@ class IntegratedCopyCsvTests(unittest.TestCase):
         from dsg_app import organizer
 
         target = self.destination / "画像管理" / "写真"
-        with patch.object(organizer.os, "name", "nt"), patch.object(
+        with patch.object(organizer, "os", SimpleNamespace(name="nt", environ=os.environ, fspath=os.fspath)), patch.object(
             organizer.subprocess, "run"
         ) as run:
             shortcut = organizer.create_destination_shortcut(target)
@@ -153,6 +157,19 @@ class IntegratedCopyCsvTests(unittest.TestCase):
         self.assertEqual(shortcut.name, "保存先を開く.lnk")
         run.assert_called_once()
         self.assertEqual(run.call_args.kwargs["env"]["DSG_SHORTCUT_TARGET"], str(target.resolve()))
+
+    @unittest.skipUnless(os.name != "nt", "PowerShell shortcut fallback is covered by Windows builds")
+    def test_windows_shortcut_falls_back_to_url_when_com_is_unavailable(self):
+        from dsg_app import organizer
+
+        target = self.destination / "画像管理" / "写真"
+        with patch.object(organizer, "os", SimpleNamespace(name="nt", environ=os.environ, fspath=os.fspath)), patch.object(
+            organizer.subprocess, "run", side_effect=organizer.subprocess.CalledProcessError(1, "powershell")
+        ):
+            shortcut = organizer.create_destination_shortcut(target)
+
+        self.assertEqual(shortcut.name, "保存先を開く.url")
+        self.assertIn("file:///", shortcut.read_text(encoding="utf-8-sig"))
 
     def test_three_japanese_files_are_logged_and_originals_are_kept(self):
         names = ["写真 01.txt", "画像 二.txt", "資料 03.txt"]
