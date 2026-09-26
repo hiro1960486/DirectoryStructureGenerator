@@ -30,7 +30,7 @@ class ExporterTests(unittest.TestCase):
         self.assertIn("docs/", "\n".join(tree_lines(result.root)))
         payload = json.loads((output / "sample_tree_data.json").read_text(encoding="utf-8"))
         self.assertEqual(payload["statistics"]["files"], 2)
-        self.assertEqual(payload["application"]["version"], "2.9.1")
+        self.assertEqual(payload["application"]["version"], "2.9.2")
 
     def test_csv_neutralizes_spreadsheet_formula(self):
         source = self.root / "sample"
@@ -46,3 +46,4 @@ class ExporterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
