@@ -1,15 +1,19 @@
-# Directory Structure Generator Ver.2.9.3
+# Directory Structure Generator Ver.2.9.4
 
 <img src="docs/DirectoryStructureGenerator_AppIcon_512.png" width="128" alt="Directory Structure Generator icon">
 
 フォルダー構成を走査し、必要な項目だけを **TXT / HTML / CSV / JSON** に出力するWindows向けGUIアプリです。
 
-- Version: 2.9.3
+- Version: 2.9.4
 - Updated: 2026-09-26
 - Author: hiro1960
 - UI: PySide6
 - 対応OS: Windows 10 / 11（64ビット推奨）
 - Python: 3.10以上（Python 3.13対応）
+
+## Ver.2.9.4 の修正
+
+プリセットの表示順▲▼を押しやすくし、画面幅が限られる場合も出力形式が重ならないよう配置を見直しました。
 
 ## 今回の主な改善
 

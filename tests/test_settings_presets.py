@@ -87,6 +87,23 @@ class SettingsPresetTests(unittest.TestCase):
         self.assertEqual(dialog.quick_limit_spin.value(), before + 1)
         dialog.close()
 
+
+    def test_clicking_order_up_and_down_buttons_changes_preset_order(self) -> None:
+        app = QApplication.instance() or QApplication([])
+        dialog = PresetManagerDialog(builtin_presets(), lambda: {})
+        dialog.show()
+        app.processEvents()
+        self.assertEqual(len(dialog.order_up_buttons), len(dialog.presets))
+        first_order = dialog.order_spin_boxes[0].value()
+        self.assertGreaterEqual(dialog.order_up_buttons[0].width(), 36)
+        QTest.mouseClick(dialog.order_up_buttons[0], Qt.MouseButton.LeftButton)
+        app.processEvents()
+        self.assertEqual(dialog.order_spin_boxes[0].value(), min(99, first_order + 1))
+        QTest.mouseClick(dialog.order_down_buttons[0], Qt.MouseButton.LeftButton)
+        app.processEvents()
+        self.assertEqual(dialog.order_spin_boxes[0].value(), first_order)
+        dialog.close()
+
     def test_default_is_always_quick_and_only_one_default_exists(self) -> None:
         presets = builtin_presets()
         presets[0]["default"] = False
