@@ -30,7 +30,7 @@ class ExporterTests(unittest.TestCase):
         self.assertIn("docs/", "\n".join(tree_lines(result.root)))
         payload = json.loads((output / "sample_tree_data.json").read_text(encoding="utf-8"))
         self.assertEqual(payload["statistics"]["files"], 2)
-        self.assertEqual(payload["application"]["version"], "2.9.6")
+        self.assertEqual(payload["application"]["version"], "2.9.7")
 
     def test_csv_neutralizes_spreadsheet_formula(self):
         source = self.root / "sample"
@@ -42,6 +42,25 @@ class ExporterTests(unittest.TestCase):
         with (output / "sample_file_list.csv").open(encoding="utf-8-sig", newline="") as handle:
             rows = list(csv.DictReader(handle))
         self.assertEqual(rows[1]["name"], "'=danger.txt")
+
+    def test_html_folder_and_file_links_use_original_paths(self):
+        source = self.root / "sample tree"
+        docs = source / "docs"
+        docs.mkdir(parents=True)
+        document = docs / "readme file.md"
+        document.write_text("hello", encoding="utf-8")
+        result = DirectoryScanner(FilterSettings()).scan(source)
+
+        output = self.root / "output"
+        export_selected(result, output, ["html"])
+        html_text = (output / "sample tree_index.html").read_text(encoding="utf-8")
+
+        self.assertIn("<details open><summary>docs</summary>", html_text)
+        self.assertIn(f'href="{docs.as_uri()}"', html_text)
+        self.assertIn(f'href="{document.as_uri()}"', html_text)
+        self.assertIn(">場所を開く ↗</a>", html_text)
+        self.assertIn("function toggle(v)", html_text)
+        self.assertIn("function searchTree(q)", html_text)
 
     def test_drive_root_output_names_are_readable(self):
         source = Path("E:/")

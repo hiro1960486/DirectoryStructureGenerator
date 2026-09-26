@@ -105,12 +105,24 @@ def export_json(result: ScanResult, destination: Path) -> None:
 
 
 def export_html(result: ScanResult, destination: Path) -> None:
+    def file_uri(node: ScanNode) -> str:
+        # Encode each original filesystem path as a clickable local-file URI.
+        return html.escape(node.path.absolute().as_uri(), quote=True)
+
     def render(node: ScanNode) -> str:
         label = html.escape(node.name)
         if node.is_dir:
             children = "".join(render(child) for child in node.children)
-            return f'<li class="folder"><details open><summary>{label}</summary><ul>{children}</ul></details></li>'
-        return f'<li class="file"><span>{label}</span><small>{html.escape(format_size(node.size))}</small></li>'
+            return (
+                f'<li class="folder"><div class="folder-row">'
+                f'<details open><summary>{label}</summary><ul>{children}</ul></details>'
+                f'<a class="path-link" href="{file_uri(node)}" target="_blank" '
+                f'rel="noopener">場所を開く ↗</a></div></li>'
+            )
+        return (
+            f'<li class="file"><a href="{file_uri(node)}" target="_blank" '
+            f'rel="noopener">{label}</a><small>{html.escape(format_size(node.size))}</small></li>'
+        )
 
     meta = " · ".join(html.escape(item) for item in _metadata(result)[6:10])
     source = html.escape(str(result.source))
@@ -125,7 +137,7 @@ def export_html(result: ScanResult, destination: Path) -> None:
 main{{max-width:1100px;margin:32px auto;padding:0 20px}} header{{background:linear-gradient(135deg,#2563eb,#06b6d4);color:#fff;padding:28px;border-radius:18px;box-shadow:0 12px 30px #0002}}
 h1{{margin:0 0 6px;font-size:26px}} .source{{word-break:break-all;opacity:.9}} .card{{margin-top:18px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px}}
 .toolbar{{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}} button,input{{border:1px solid var(--line);border-radius:9px;padding:9px 12px;background:var(--card);color:var(--text)}} input{{flex:1;min-width:220px}}
-ul{{list-style:none;padding-left:22px}} li{{margin:3px 0}} summary{{cursor:pointer;font-weight:650}} summary::marker{{color:var(--accent)}} .file{{display:flex;gap:12px;justify-content:space-between;border-left:2px solid var(--line);padding-left:10px}} small{{color:var(--muted)}} .hidden{{display:none}}
+ul{{list-style:none;padding-left:22px}} li{{margin:3px 0}} summary{{cursor:pointer;font-weight:650}} summary::marker{{color:var(--accent)}} .folder-row{{display:flex;align-items:flex-start;gap:12px}} .folder-row details{{flex:1;min-width:0}} .path-link{{flex:none;font-size:12px;color:var(--accent);text-decoration:none}} .path-link:hover,.file a:hover{{text-decoration:underline}} .file{{display:flex;gap:12px;justify-content:space-between;border-left:2px solid var(--line);padding-left:10px}} .file a{{color:var(--accent);overflow-wrap:anywhere}} small{{color:var(--muted)}} .hidden{{display:none}}
 </style></head><body><main><header><h1>📁 {html.escape(result.root.name)}</h1><div>{meta}</div><div class="source">{source}</div></header>
 <section class="card"><div class="toolbar"><button onclick="toggle(true)">すべて開く</button><button onclick="toggle(false)">すべて閉じる</button><input id="q" placeholder="名前を検索" oninput="searchTree(this.value)"></div>
 <ul id="tree">{render(result.root)}</ul></section><p><small>{APP_NAME} Ver.{APP_VERSION} · {generated}</small></p></main>
