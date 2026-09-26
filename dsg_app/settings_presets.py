@@ -1,4 +1,9 @@
-"""Named application setting presets with safe CSV interchange."""
+"""Named application setting presets with safe CSV interchange.
+
+Version: 2.9.5
+Updated: 2026-09-26
+Author: hiro1960
+"""
 
 from __future__ import annotations
 
@@ -228,3 +233,14 @@ def merge_presets(
             positions[key] = len(merged)
             merged.append(item)
     return normalize_presets(merged, max_favorites)
+
+
+def set_preset_organizer_settings(
+    presets: Iterable[dict[str, Any]], name: str, organizer: dict[str, Any],
+) -> bool:
+    """Store organizer defaults on the explicitly selected preset."""
+    for item in presets:
+        if str(item.get("name", "")) == name:
+            item["organizer"] = deepcopy(organizer)
+            return True
+    return False
