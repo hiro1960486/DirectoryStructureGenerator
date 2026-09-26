@@ -7,7 +7,9 @@ from pathlib import Path
 if sys.platform != "win32":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QAbstractSpinBox
 
 from dsg_app.settings_presets import (
     MAX_FAVORITES, builtin_presets, export_presets_csv, import_presets_csv,
@@ -68,8 +70,21 @@ class SettingsPresetTests(unittest.TestCase):
         app = QApplication.instance() or QApplication([])
         dialog = PresetManagerDialog(builtin_presets(), lambda: {})
         self.assertTrue(dialog.quick_limit_spin.isEnabled())
-        self.assertEqual(dialog.quick_limit_spin.buttonSymbols(), dialog.quick_limit_spin.ButtonSymbols.UpDownArrows)
+        self.assertEqual(dialog.quick_limit_spin.buttonSymbols(), QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.assertTrue(dialog.quick_limit_up_button.isEnabled())
+        self.assertTrue(dialog.quick_limit_down_button.isEnabled())
         self.assertEqual(dialog.table.horizontalHeaderItem(0).text(), "既定")
+        dialog.close()
+
+    def test_clicking_quick_limit_up_arrow_increments_the_value(self) -> None:
+        app = QApplication.instance() or QApplication([])
+        dialog = PresetManagerDialog(builtin_presets(), lambda: {})
+        dialog.show()
+        app.processEvents()
+        before = dialog.quick_limit_spin.value()
+        QTest.mouseClick(dialog.quick_limit_up_button, Qt.MouseButton.LeftButton)
+        app.processEvents()
+        self.assertEqual(dialog.quick_limit_spin.value(), before + 1)
         dialog.close()
 
     def test_default_is_always_quick_and_only_one_default_exists(self) -> None:
