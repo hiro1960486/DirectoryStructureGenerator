@@ -37,11 +37,6 @@ QGroupBox { border:1px solid #2b3c56; border-radius:12px; margin-top:12px; paddi
 QGroupBox::title { subcontrol-origin:margin; left:12px; padding:0 6px; color:#8db8ff; }
 QLineEdit, QComboBox, QPlainTextEdit, QTextBrowser, QSpinBox { background:#0d1421; border:1px solid #344966; border-radius:8px; padding:7px; selection-background-color:#2563eb; }
 QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QSpinBox:focus { border:1px solid #60a5fa; }
-QSpinBox::up-button, QSpinBox::down-button { subcontrol-origin:border; width:24px; border-left:1px solid #344966; }
-QSpinBox::up-button { subcontrol-position:top right; }
-QSpinBox::down-button { subcontrol-position:bottom right; }
-QSpinBox::up-button:hover, QSpinBox::down-button:hover { background:#314866; }
-QSpinBox::up-button:pressed, QSpinBox::down-button:pressed { background:#2563eb; }
 QPushButton { background:#263750; border:1px solid #385173; border-radius:8px; padding:8px 14px; font-weight:600; }
 QPushButton:hover { background:#314866; } QPushButton:disabled { color:#718096; background:#1a2536; }
 QPushButton#primary { background:#2563eb; border-color:#3b82f6; color:white; }
@@ -69,11 +64,6 @@ QGroupBox { border:1px solid #d5deea; border-radius:12px; margin-top:12px; paddi
 QGroupBox::title { subcontrol-origin:margin; left:12px; padding:0 6px; color:#1d4ed8; }
 QLineEdit, QComboBox, QPlainTextEdit, QTextBrowser, QSpinBox { background:white; border:1px solid #c9d4e3; border-radius:8px; padding:7px; selection-background-color:#93c5fd; }
 QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QSpinBox:focus { border:1px solid #2563eb; }
-QSpinBox::up-button, QSpinBox::down-button { subcontrol-origin:border; width:24px; border-left:1px solid #c9d4e3; }
-QSpinBox::up-button { subcontrol-position:top right; }
-QSpinBox::down-button { subcontrol-position:bottom right; }
-QSpinBox::up-button:hover, QSpinBox::down-button:hover { background:#e1eaf5; }
-QSpinBox::up-button:pressed, QSpinBox::down-button:pressed { background:#bfdbfe; }
 QPushButton { background:#edf2f8; border:1px solid #c8d4e4; border-radius:8px; padding:8px 14px; font-weight:600; }
 QPushButton:hover { background:#e1eaf5; } QPushButton:disabled { color:#94a3b8; }
 QPushButton#primary { background:#2563eb; border-color:#2563eb; color:white; } QPushButton#primary:hover { background:#1d4ed8; }
