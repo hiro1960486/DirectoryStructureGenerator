@@ -1,6 +1,6 @@
 """Popup UI for read-only inspection and safety-checked file organization.
 
-Version: 2.9.2
+Version: 2.9.5
 Updated: 2026-09-26
 Author: hiro1960
 """
@@ -341,6 +341,9 @@ class FileManagerDialog(QDialog):
         self.source, self.output, self.settings = source, output, settings
         self.destination_history = list(destination_history or [])
         self.organizer_settings = dict(organizer_settings or {})
+        self.organizer_settings.setdefault("result_format", "csv")
+        self.organizer_settings.setdefault("result_history_mode", "append")
+        self.organizer_settings.setdefault("result_log_directory", "")
         saved_extensions = self.organizer_settings.get("custom_extensions", [])
         self.custom_extensions = [
             self.normalized_extension(str(value))
@@ -729,6 +732,67 @@ class FileManagerDialog(QDialog):
         )
         self.source_action_warning.setWordWrap(True)
         form.addRow("", self.source_action_warning)
+
+        format_row = QWidget()
+        format_layout = QHBoxLayout(format_row)
+        format_layout.setContentsMargins(0, 0, 0, 0)
+        self.result_format_group = QButtonGroup(self)
+        self.result_format_group.setExclusive(True)
+        self.result_csv_radio = QPushButton("CSV（.csv）")
+        self.result_xlsx_radio = QPushButton("Excelブック（.xlsx）")
+        self._style_choice_toggle(self.result_csv_radio)
+        self._style_choice_toggle(self.result_xlsx_radio)
+        self.result_format_group.addButton(self.result_csv_radio)
+        self.result_format_group.addButton(self.result_xlsx_radio)
+        saved_format = str(self.organizer_settings.get("result_format", "csv")).lower()
+        self.result_xlsx_radio.setChecked(saved_format == "xlsx")
+        self.result_csv_radio.setChecked(saved_format != "xlsx")
+        self.result_csv_radio.toggled.connect(self._on_result_format_changed)
+        self.result_xlsx_radio.toggled.connect(self._on_result_format_changed)
+        format_layout.addWidget(self.result_csv_radio, 1)
+        format_layout.addWidget(self.result_xlsx_radio, 1)
+        format_layout.addStretch()
+        form.addRow("コピー結果ファイル", format_row)
+
+        history_row = QWidget()
+        history_layout = QHBoxLayout(history_row)
+        history_layout.setContentsMargins(0, 0, 0, 0)
+        self.result_history_group = QButtonGroup(self)
+        self.result_history_group.setExclusive(True)
+        self.result_append_radio = QPushButton("蓄積（履歴に追加）")
+        self.result_reset_radio = QPushButton("初期化（今回分だけ）")
+        self._style_choice_toggle(self.result_append_radio)
+        self._style_choice_toggle(self.result_reset_radio)
+        self.result_history_group.addButton(self.result_append_radio)
+        self.result_history_group.addButton(self.result_reset_radio)
+        saved_history_mode = str(self.organizer_settings.get("result_history_mode", "append")).lower()
+        self.result_reset_radio.setChecked(saved_history_mode == "reset")
+        self.result_append_radio.setChecked(saved_history_mode != "reset")
+        self.result_append_radio.toggled.connect(self._on_result_history_mode_changed)
+        self.result_reset_radio.toggled.connect(self._on_result_history_mode_changed)
+        history_layout.addWidget(self.result_append_radio, 1)
+        history_layout.addWidget(self.result_reset_radio, 1)
+        history_layout.addStretch()
+        form.addRow("記録方法", history_row)
+        self.result_directory_edit = QLineEdit(
+            str(self.organizer_settings.get("result_log_directory", ""))
+        )
+        self.result_directory_edit.setPlaceholderText("未指定の場合はコピー先フォルダーに保存")
+        self.result_directory_edit.textChanged.connect(self._on_result_directory_changed)
+        result_directory_row = QWidget()
+        result_directory_layout = QHBoxLayout(result_directory_row)
+        result_directory_layout.setContentsMargins(0, 0, 0, 0)
+        result_directory_layout.addWidget(self.result_directory_edit, 1)
+        self.result_directory_browse_button = QPushButton("参照…")
+        self.result_directory_browse_button.clicked.connect(self.choose_result_directory)
+        result_directory_layout.addWidget(self.result_directory_browse_button)
+        form.addRow("結果履歴の保存先", result_directory_row)
+        history_help = QLabel(
+            "初期化を選ぶと、既存ファイルは日付付きの履歴ファイルへ退避してから今回分を記録します。"
+        )
+        history_help.setWordWrap(True)
+        history_help.setStyleSheet("color:#64748b")
+        form.addRow("", history_help)
 
         settings_layout.addLayout(form)
 
@@ -1876,17 +1940,32 @@ class FileManagerDialog(QDialog):
             "keep_subfolders": self.keep_subfolders.isChecked(),
             "collision": str(self.collision_combo.currentData()),
             "custom_extensions": list(self.custom_extensions),
-            "result_log_directory": str(self.organizer_settings.get("result_log_directory", "")),
-            "result_format": str(self.organizer_settings.get("result_format", "csv")),
-            "result_history_mode": str(self.organizer_settings.get("result_history_mode", "append")),
+            "result_log_directory": self.result_directory_edit.text().strip(),
+            "result_format": self._selected_result_format(),
+            "result_history_mode": self._selected_history_mode(),
         }
         self.status_label.setText("現在の整理コピー設定を既定値として保存しました。")
 
     def _selected_result_format(self) -> str:
-        return "xlsx" if str(self.organizer_settings.get("result_format", "csv")).lower() == "xlsx" else "csv"
+        return "xlsx" if self.result_xlsx_radio.isChecked() else "csv"
 
     def _selected_history_mode(self) -> str:
-        return "reset" if str(self.organizer_settings.get("result_history_mode", "append")).lower() == "reset" else "append"
+        return "reset" if self.result_reset_radio.isChecked() else "append"
+
+    def _on_result_format_changed(self, checked: bool) -> None:
+        self.organizer_settings["result_format"] = self._selected_result_format()
+
+    def _on_result_history_mode_changed(self, checked: bool) -> None:
+        self.organizer_settings["result_history_mode"] = self._selected_history_mode()
+
+    def _on_result_directory_changed(self, value: str) -> None:
+        self.organizer_settings["result_log_directory"] = value.strip()
+
+    def choose_result_directory(self) -> None:
+        initial = self.result_directory_edit.text().strip() or self.destination_combo.currentText().strip()
+        selected = QFileDialog.getExistingDirectory(self, "結果履歴の保存先", initial)
+        if selected:
+            self.result_directory_edit.setText(selected)
 
     @Slot(str)
     def set_dropped_destination(self, folder: str) -> None:
@@ -2079,10 +2158,12 @@ class OrganizerSettingsDialog(QDialog):
 
     def __init__(
         self, settings: dict[str, object], destination_history: list[str], parent=None,
+        presets: list[dict[str, object]] | None = None,
+        selected_preset_name: str = "",
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("整理コピーの既定設定")
-        self.resize(760, 430)
+        self.resize(920, 520)
         self.settings = dict(settings)
         layout = QVBoxLayout(self)
         title = QLabel("整理コピーの既定設定")
@@ -2146,6 +2227,23 @@ class OrganizerSettingsDialog(QDialog):
         history_row.addWidget(self.result_reset_radio)
         history_row.addStretch()
         form.addRow("記録方法", history_row)
+        self.save_preset_combo = QComboBox()
+        self.save_preset_combo.setObjectName("organizerSettingsPresetCombo")
+        preset_names = [str(item.get("name", "")).strip() for item in (presets or [])]
+        preset_names = [name for name in preset_names if name]
+        if preset_names:
+            self.save_preset_combo.addItems(preset_names)
+            if selected_preset_name in preset_names:
+                self.save_preset_combo.setCurrentText(selected_preset_name)
+        else:
+            self.save_preset_combo.addItem("アプリ共通の既定設定")
+            self.save_preset_combo.setEnabled(False)
+        self.save_preset_combo.setToolTip(
+            "保存するとアプリ共通の既定値と、ここで選んだプリセットの整理コピー設定を更新します。"
+        )
+        self.save_preset_combo.setMinimumWidth(200)
+        history_row.addWidget(QLabel("保存するプリセット"))
+        history_row.addWidget(self.save_preset_combo, 1)
         history_help = QLabel("初期化を選ぶと既存ファイルを日付付きで退避してから今回分を記録します。")
         history_help.setWordWrap(True)
         form.addRow("", history_help)
@@ -2256,3 +2354,5 @@ class OrganizerSettingsDialog(QDialog):
         })
         return self.settings
 
+    def selected_preset_name(self) -> str:
+        return self.save_preset_combo.currentText().strip() if self.save_preset_combo.isEnabled() else ""

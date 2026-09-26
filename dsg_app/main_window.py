@@ -1,6 +1,6 @@
 """Modern PySide6 user interface.
 
-Version: 2.9.3
+Version: 2.9.5
 Updated: 2026-09-26
 Author: hiro1960
 """
@@ -24,7 +24,7 @@ from .exporters import export_selected, format_size, tree_lines
 from .file_manager_dialog import FileManagerDialog, OrganizerSettingsDialog
 from .models import FilterSettings, PRESETS, ScanResult
 from .preset_dialog import PresetManagerDialog
-from .settings_presets import builtin_presets, normalize_presets
+from .settings_presets import builtin_presets, normalize_presets, set_preset_organizer_settings
 from .scanner import DirectoryScanner, ScanCancelled
 from .version import APP_NAME, APP_VERSION, AUTHOR, UPDATED
 
@@ -1007,19 +1007,29 @@ class MainWindow(QMainWindow):
         self._save_ui_config()
 
     def show_organizer_settings(self) -> None:
+        presets = self.settings_presets()
         dialog = OrganizerSettingsDialog(
             dict(self.config.get("organizer", {})),
             list(self.config.get("organizer_destinations", [])), self,
+            presets=presets,
+            selected_preset_name=str(self.config.get("active_settings_preset", "")),
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        self.config["organizer"] = dialog.values()
+        organizer_settings = dialog.values()
+        selected_preset = dialog.selected_preset_name()
+        self.config["organizer"] = organizer_settings
+        if selected_preset:
+            set_preset_organizer_settings(
+                self.config.get("settings_presets", []), selected_preset, organizer_settings,
+            )
         try:
             save_config(self.config)
         except OSError as exc:
             QMessageBox.critical(self, "設定保存エラー", str(exc))
             return
-        self.statusBar().showMessage("整理コピーの既定設定を保存しました", 4000)
+        saved_to = f"（{selected_preset} にも保存）" if selected_preset else ""
+        self.statusBar().showMessage(f"整理コピーの既定設定を保存しました{saved_to}", 5000)
 
     def toggle_theme(self) -> None:
         self.apply_theme("light" if self.config.get("theme") == "dark" else "dark")
@@ -1070,4 +1080,3 @@ class MainWindow(QMainWindow):
             self.thread.wait(2000)
         self._save_ui_config()
         event.accept()
-

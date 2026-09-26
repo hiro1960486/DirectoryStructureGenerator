@@ -9,13 +9,15 @@ if sys.platform != "win32":
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QAbstractSpinBox
+from PySide6.QtWidgets import QApplication, QAbstractSpinBox, QDialog, QFileDialog
+from unittest.mock import patch
 
 from dsg_app.settings_presets import (
     MAX_FAVORITES, builtin_presets, export_presets_csv, import_presets_csv,
     merge_presets, normalize_presets,
+    set_preset_organizer_settings,
 )
-from dsg_app.preset_dialog import PresetManagerDialog
+from dsg_app.preset_dialog import PresetCreateDialog, PresetManagerDialog
 
 
 class SettingsPresetTests(unittest.TestCase):
@@ -104,6 +106,41 @@ class SettingsPresetTests(unittest.TestCase):
         self.assertEqual(dialog.order_spin_boxes[0].value(), first_order)
         dialog.close()
 
+    def test_preset_creation_saves_selected_source_and_output_folders(self) -> None:
+        app = QApplication.instance() or QApplication([])
+        manager = PresetManagerDialog(builtin_presets(), lambda: {
+            "source": "C:/existing-source", "output": "D:/existing-output",
+            "filters": {}, "formats": {}, "organizer": {},
+        })
+        from dsg_app import preset_dialog as preset_dialog_module
+        create_dialog = PresetCreateDialog("選択フォルダー設定", "作成時に選んだ場所",
+                                           "C:/selected-source", "D:/selected-output")
+        with patch.object(preset_dialog_module, "PresetCreateDialog", return_value=create_dialog):
+            with patch.object(create_dialog, "exec", return_value=QDialog.DialogCode.Accepted):
+                manager.add_current()
+        created = next(item for item in manager.presets if item["name"] == "選択フォルダー設定")
+        self.assertEqual(created["source"], "C:/selected-source")
+        self.assertEqual(created["output"], "D:/selected-output")
+        self.assertEqual(created["memo"], "作成時に選んだ場所")
+        manager.close()
+
+    def test_preset_creation_folder_picker_sets_selected_path(self) -> None:
+        app = QApplication.instance() or QApplication([])
+        dialog = PresetCreateDialog("例", "", "", "")
+        with patch.object(QFileDialog, "getExistingDirectory", return_value="D:/chosen"):
+            dialog._choose_folder(dialog.source_edit, "対象フォルダーを選択")
+        self.assertEqual(dialog.source_edit.text(), "D:/chosen")
+        dialog.close()
+
+    def test_organizer_defaults_are_saved_to_the_explicit_preset(self) -> None:
+        presets = builtin_presets()
+        organizer = {"result_format": "xlsx", "result_history_mode": "reset"}
+        self.assertTrue(set_preset_organizer_settings(presets, "写真・画像", organizer))
+        selected = next(item for item in presets if item["name"] == "写真・画像")
+        self.assertEqual(selected["organizer"], organizer)
+        self.assertEqual(presets[0]["organizer"], builtin_presets()[0]["organizer"])
+        self.assertFalse(set_preset_organizer_settings(presets, "missing", organizer))
+
     def test_default_is_always_quick_and_only_one_default_exists(self) -> None:
         presets = builtin_presets()
         presets[0]["default"] = False
@@ -162,4 +199,3 @@ class SettingsPresetTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
