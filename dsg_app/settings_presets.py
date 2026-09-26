@@ -113,12 +113,16 @@ def normalize_preset(value: dict[str, Any]) -> dict[str, Any]:
     organizer = value.get("organizer", {})
     if not isinstance(filters, dict) or not isinstance(formats, dict) or not isinstance(organizer, dict):
         raise ValueError(f"「{name}」の設定形式が正しくありません。")
+    # Include every organizer option so settings survive config normalization.
     safe_organizer = {
-        key: organizer[key] for key in (
-            "default_destination", "naming_template", "custom_template",
-            "keep_subfolders", "collision", "result_log_directory",
-        ) if key in organizer
+        "default_destination": "", "naming_template": "{name}",
+        "custom_template": "{name}", "keep_subfolders": True,
+        "collision": "number", "result_log_directory": "",
+        "result_format": "csv", "result_history_mode": "append",
     }
+    safe_organizer.update({
+        key: organizer[key] for key in safe_organizer if key in organizer
+    })
     return {
         "name": name,
         "memo": str(value.get("memo", "")).strip()[:500],
@@ -244,3 +248,13 @@ def set_preset_organizer_settings(
             item["organizer"] = deepcopy(organizer)
             return True
     return False
+
+
+
+def startup_preset_name(presets: Iterable[dict[str, Any]], active_name: str = "") -> str:
+    """Restore the last selected preset, falling back to the marked default."""
+    values = list(presets)
+    if active_name and any(item.get("name") == active_name for item in values):
+        return active_name
+    default = next((item for item in values if item.get("default")), None)
+    return str(default.get("name", "")) if default else ""
