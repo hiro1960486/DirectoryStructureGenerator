@@ -56,8 +56,8 @@ class ExporterTests(unittest.TestCase):
         html_text = (output / "sample tree_index.html").read_text(encoding="utf-8")
 
         self.assertIn("<details open><summary>docs</summary>", html_text)
-        self.assertIn(f'href="{docs.as_uri()}"', html_text)
-        self.assertIn(f'href="{document.as_uri()}"', html_text)
+        self.assertIn(f'href="{docs.resolve().as_uri()}"', html_text)
+        self.assertIn(f'href="{document.resolve().as_uri()}"', html_text)
         self.assertIn(">場所を開く ↗</a>", html_text)
         self.assertIn("function toggle(v)", html_text)
         self.assertIn("function searchTree(q)", html_text)
