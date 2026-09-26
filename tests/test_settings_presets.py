@@ -64,6 +64,14 @@ class SettingsPresetTests(unittest.TestCase):
         self.assertEqual(sum(bool(item["quick"]) for item in dialog.presets), 6)
         dialog.close()
 
+    def test_quick_limit_spin_has_active_arrow_controls_and_default_column_label(self) -> None:
+        app = QApplication.instance() or QApplication([])
+        dialog = PresetManagerDialog(builtin_presets(), lambda: {})
+        self.assertTrue(dialog.quick_limit_spin.isEnabled())
+        self.assertEqual(dialog.quick_limit_spin.buttonSymbols(), dialog.quick_limit_spin.ButtonSymbols.UpDownArrows)
+        self.assertEqual(dialog.table.horizontalHeaderItem(0).text(), "既定")
+        dialog.close()
+
     def test_default_is_always_quick_and_only_one_default_exists(self) -> None:
         presets = builtin_presets()
         presets[0]["default"] = False
@@ -122,3 +130,4 @@ class SettingsPresetTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
