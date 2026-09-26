@@ -1,7 +1,7 @@
 """Modern PySide6 user interface.
 
-Version: 2.9.0
-Updated: 2026-09-25
+Version: 2.9.2
+Updated: 2026-09-26
 Author: hiro1960
 """
 
@@ -623,6 +623,8 @@ class MainWindow(QMainWindow):
             self._refresh_preset_save_state()
 
     def _connect_preset_change_tracking(self) -> None:
+        self.source_combo.currentTextChanged.connect(self._save_active_preset_paths)
+        self.output_combo.currentTextChanged.connect(self._save_active_preset_paths)
         self.source_combo.currentTextChanged.connect(self._refresh_preset_save_state)
         self.output_combo.currentTextChanged.connect(self._refresh_preset_save_state)
         self.excluded_dirs.textChanged.connect(self._refresh_preset_save_state)
@@ -631,6 +633,24 @@ class MainWindow(QMainWindow):
         self.max_depth.valueChanged.connect(self._refresh_preset_save_state)
         for checkbox in (self.hidden_check, self.empty_check, self.symlink_check, *self.format_checks.values()):
             checkbox.toggled.connect(self._refresh_preset_save_state)
+
+    def _save_active_preset_paths(self, *_args: object) -> None:
+        """Persist only folder paths for the active preset, including built-ins."""
+        if not getattr(self, "_preset_tracking_ready", False):
+            return
+        name = str(self.config.get("active_settings_preset", ""))
+        values = self.config.get("settings_presets", [])
+        if not isinstance(values, list) or not name:
+            return
+        preset = next((item for item in values if isinstance(item, dict) and item.get("name") == name), None)
+        if preset is None:
+            return
+        preset["source"] = self.source_combo.currentText().strip()
+        preset["output"] = self.output_combo.currentText().strip()
+        try:
+            save_config(self.config)
+        except OSError:
+            pass
 
     def _active_settings_preset(self) -> dict[str, object] | None:
         name = str(self.config.get("active_settings_preset", ""))
@@ -708,6 +728,7 @@ class MainWindow(QMainWindow):
         source = str(preset.get("source", "")).strip()
         output = str(preset.get("output", "")).strip()
         missing_source = False
+        self.config["active_settings_preset"] = name
         if source and Path(source).is_dir():
             self.source_combo.setCurrentText(source)
         elif source:
@@ -723,7 +744,6 @@ class MainWindow(QMainWindow):
         organizer = preset.get("organizer", {})
         if isinstance(organizer, dict):
             self.config["organizer"] = dict(organizer)
-        self.config["active_settings_preset"] = name
         self.settings_preset_combo.setCurrentText(name)
         self._save_ui_config()
         self._refresh_preset_save_state()
@@ -1046,3 +1066,4 @@ class MainWindow(QMainWindow):
             self.thread.wait(2000)
         self._save_ui_config()
         event.accept()
+
