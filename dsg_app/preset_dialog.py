@@ -1,4 +1,9 @@
-"""Preset management dialog."""
+"""Preset management dialog.
+
+Version: 2.9.5
+Updated: 2026-09-26
+Author: hiro1960
+"""
 
 from __future__ import annotations
 
@@ -7,15 +12,58 @@ from typing import Any, Callable
 
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView,
-    QInputDialog, QLabel, QMessageBox, QPushButton, QRadioButton, QSpinBox, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout,
+    QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton, QRadioButton,
+    QSpinBox, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from .settings_presets import (
     MAX_FAVORITES, export_presets_csv, import_presets_csv, merge_presets,
     normalize_preset, normalize_presets,
 )
+
+
+class PresetCreateDialog(QDialog):
+    """Collect a preset name, memo, and its source/output folders."""
+
+    def __init__(self, name: str, memo: str, source: str, output: str, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("プリセットを作成")
+        self.resize(680, 250)
+        form = QFormLayout(self)
+        self.name_edit = QLineEdit(name)
+        self.memo_edit = QTextEdit(memo)
+        self.memo_edit.setMaximumHeight(70)
+        self.source_edit = QLineEdit(source)
+        self.output_edit = QLineEdit(output)
+        form.addRow("プリセット名", self.name_edit)
+        form.addRow("メモ", self.memo_edit)
+        form.addRow("1. 対象フォルダー", self._folder_row(self.source_edit, "対象フォルダーを選択"))
+        form.addRow("出力先フォルダー", self._folder_row(self.output_edit, "出力先フォルダーを選択"))
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        self.save_button = QPushButton("作成")
+        self.cancel_button = QPushButton("キャンセル")
+        self.save_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+        buttons.addWidget(self.save_button)
+        buttons.addWidget(self.cancel_button)
+        form.addRow(buttons)
+
+    def _folder_row(self, edit: QLineEdit, title: str) -> QWidget:
+        row = QWidget(self)
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(edit, 1)
+        browse = QPushButton("参照…")
+        browse.clicked.connect(lambda: self._choose_folder(edit, title))
+        layout.addWidget(browse)
+        return row
+
+    def _choose_folder(self, edit: QLineEdit, title: str) -> None:
+        selected = QFileDialog.getExistingDirectory(self, title, edit.text().strip())
+        if selected:
+            edit.setText(selected)
 
 
 class PresetManagerDialog(QDialog):
@@ -307,12 +355,25 @@ class PresetManagerDialog(QDialog):
         return new_name, new_memo.strip()
 
     def add_current(self) -> None:
-        prompted = self._prompt_name_and_memo("新しいプリセット", "")
-        if not prompted:
+        current = self.current_settings()
+        dialog = PresetCreateDialog(
+            "新しいプリセット", "", str(current.get("source", "")),
+            str(current.get("output", "")), self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        name, memo = prompted
-        item = self.current_settings()
-        item.update({"name": name, "memo": memo, "favorite": False, "quick": False,
+        name = dialog.name_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "プリセット名", "プリセット名を入力してください。")
+            return
+        if any(item["name"].casefold() == name.casefold() for item in self.presets):
+            QMessageBox.warning(self, "確認", "同じ名前のプリセットがあります。")
+            return
+        item = current
+        item.update({"source": dialog.source_edit.text().strip(),
+                     "output": dialog.output_edit.text().strip()})
+        item.update({"name": name, "memo": dialog.memo_edit.toPlainText().strip(),
+                     "favorite": False, "quick": False,
                      "default": False, "order": len(self.presets) + 1, "builtin": False})
         self.presets.append(normalize_preset(item))
         self.refresh(name)
@@ -437,4 +498,3 @@ class PresetManagerDialog(QDialog):
                 quick_count += 1
         self.refresh()
         self._changed()
-
