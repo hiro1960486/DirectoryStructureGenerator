@@ -15,7 +15,7 @@ from unittest.mock import patch
 from dsg_app.settings_presets import (
     MAX_FAVORITES, builtin_presets, export_presets_csv, import_presets_csv,
     merge_presets, normalize_presets,
-    set_preset_organizer_settings,
+    set_preset_organizer_settings, startup_preset_name,
 )
 from dsg_app.preset_dialog import PresetCreateDialog, PresetManagerDialog
 
@@ -140,6 +140,25 @@ class SettingsPresetTests(unittest.TestCase):
         self.assertEqual(selected["organizer"], organizer)
         self.assertEqual(presets[0]["organizer"], builtin_presets()[0]["organizer"])
         self.assertFalse(set_preset_organizer_settings(presets, "missing", organizer))
+
+    def test_organizer_result_format_and_history_survive_normalization(self) -> None:
+        presets = builtin_presets()
+        settings = {
+            "result_format": "xlsx", "result_history_mode": "reset",
+            "result_log_directory": "D:/history", "default_destination": "D:/sorted",
+        }
+        self.assertTrue(set_preset_organizer_settings(presets, "写真・画像", settings))
+        normalized = normalize_presets(presets)
+        selected = next(item for item in normalized if item["name"] == "写真・画像")
+        self.assertEqual(selected["organizer"]["result_format"], "xlsx")
+        self.assertEqual(selected["organizer"]["result_history_mode"], "reset")
+        self.assertEqual(selected["organizer"]["result_log_directory"], "D:/history")
+
+    def test_startup_restores_last_active_preset_and_falls_back_to_default(self) -> None:
+        presets = builtin_presets()
+        presets.append(dict(presets[0], name="保存先を記憶", builtin=False, default=False, order=7))
+        self.assertEqual(startup_preset_name(presets, "保存先を記憶"), "保存先を記憶")
+        self.assertEqual(startup_preset_name(presets, "削除済み"), "開発フォルダー")
 
     def test_default_is_always_quick_and_only_one_default_exists(self) -> None:
         presets = builtin_presets()

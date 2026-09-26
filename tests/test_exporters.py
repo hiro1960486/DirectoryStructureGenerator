@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from dsg_app.exporters import export_selected, tree_lines
-from dsg_app.models import FilterSettings
+from dsg_app.models import FilterSettings, ScanNode, ScanResult, ScanStats
 from dsg_app.scanner import DirectoryScanner
 
 
@@ -30,7 +30,7 @@ class ExporterTests(unittest.TestCase):
         self.assertIn("docs/", "\n".join(tree_lines(result.root)))
         payload = json.loads((output / "sample_tree_data.json").read_text(encoding="utf-8"))
         self.assertEqual(payload["statistics"]["files"], 2)
-        self.assertEqual(payload["application"]["version"], "2.9.5")
+        self.assertEqual(payload["application"]["version"], "2.9.6")
 
     def test_csv_neutralizes_spreadsheet_formula(self):
         source = self.root / "sample"
@@ -42,6 +42,15 @@ class ExporterTests(unittest.TestCase):
         with (output / "sample_file_list.csv").open(encoding="utf-8-sig", newline="") as handle:
             rows = list(csv.DictReader(handle))
         self.assertEqual(rows[1]["name"], "'=danger.txt")
+
+    def test_drive_root_output_names_are_readable(self):
+        source = Path("E:/")
+        root = ScanNode(name="E:", path=source, relative_path=Path("."), is_dir=True, depth=0)
+        result = ScanResult(source=source, root=root, stats=ScanStats(), filters=FilterSettings())
+        created = export_selected(result, self.root / "output", ["html", "csv"])
+        self.assertEqual([path.name for path in created], [
+            "E_drive_index.html", "E_drive_file_list.csv",
+        ])
 
 
 if __name__ == "__main__":

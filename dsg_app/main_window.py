@@ -24,7 +24,10 @@ from .exporters import export_selected, format_size, tree_lines
 from .file_manager_dialog import FileManagerDialog, OrganizerSettingsDialog
 from .models import FilterSettings, PRESETS, ScanResult
 from .preset_dialog import PresetManagerDialog
-from .settings_presets import builtin_presets, normalize_presets, set_preset_organizer_settings
+from .settings_presets import (
+    builtin_presets, normalize_presets, set_preset_organizer_settings,
+    startup_preset_name,
+)
 from .scanner import DirectoryScanner, ScanCancelled
 from .version import APP_NAME, APP_VERSION, AUTHOR, UPDATED
 
@@ -639,18 +642,25 @@ class MainWindow(QMainWindow):
             checkbox.toggled.connect(self._refresh_preset_save_state)
 
     def _save_active_preset_paths(self, *_args: object) -> None:
-        """Persist only folder paths for the active preset, including built-ins."""
+        """Persist chosen folders immediately and attach them to the active preset."""
         if not getattr(self, "_preset_tracking_ready", False):
             return
         name = str(self.config.get("active_settings_preset", ""))
         values = self.config.get("settings_presets", [])
-        if not isinstance(values, list) or not name:
-            return
-        preset = next((item for item in values if isinstance(item, dict) and item.get("name") == name), None)
-        if preset is None:
-            return
-        preset["source"] = self.source_combo.currentText().strip()
-        preset["output"] = self.output_combo.currentText().strip()
+        source = self.source_combo.currentText().strip()
+        output = self.output_combo.currentText().strip()
+        self.config["source"] = source
+        self.config["output"] = output
+        self.config["source_history"] = add_history(list(self.config.get("source_history", [])), source)
+        self.config["output_history"] = add_history(list(self.config.get("output_history", [])), output)
+        if isinstance(values, list) and name:
+            preset = next(
+                (item for item in values if isinstance(item, dict) and item.get("name") == name),
+                None,
+            )
+            if preset is not None:
+                preset["source"] = source
+                preset["output"] = output
         try:
             save_config(self.config)
         except OSError:
@@ -720,9 +730,11 @@ class MainWindow(QMainWindow):
         }
 
     def _apply_default_preset_on_startup(self) -> None:
-        default = next((item for item in self.settings_presets() if item.get("default")), None)
-        if default:
-            self.apply_settings_preset(str(default["name"]), warn_missing=False)
+        name = startup_preset_name(
+            self.settings_presets(), str(self.config.get("active_settings_preset", ""))
+        )
+        if name:
+            self.apply_settings_preset(name, warn_missing=False)
 
     @Slot(str)
     def apply_settings_preset(self, name: str, warn_missing: bool = True) -> None:

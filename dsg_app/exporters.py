@@ -139,7 +139,12 @@ EXPORTERS = {"txt": export_txt, "html": export_html, "csv": export_csv, "json": 
 
 def export_selected(result: ScanResult, output_dir: Path, formats: list[str]) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = "".join(char if char not in '<>:"/\\|?*' else "_" for char in result.root.name).strip() or "directory"
+    root_name = result.root.name.strip()
+    # A Windows drive root is represented by Path.name as "E:". Avoid
+    # producing filenames such as "E__file_list.csv" after sanitizing it.
+    if len(root_name) == 2 and root_name[1] == ":" and root_name[0].isalpha():
+        root_name = f"{root_name[0].upper()}_drive"
+    safe_name = "".join(char if char not in '<>:"/\\|?*' else "_" for char in root_name).strip(" _.") or "directory"
     suffixes = {"txt": "tree", "html": "index", "csv": "file_list", "json": "tree_data"}
     created: list[Path] = []
     for format_name in formats:
