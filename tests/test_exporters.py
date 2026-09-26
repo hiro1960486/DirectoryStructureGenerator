@@ -45,7 +45,7 @@ class ExporterTests(unittest.TestCase):
 
     def test_drive_root_output_names_are_readable(self):
         source = Path("E:/")
-        root = ScanNode(name="E:", path=source, relative_path=Path("."), is_dir=True, depth=0)
+        root = ScanNode(name="E:\\\\", path=source, relative_path=Path("."), is_dir=True, depth=0)
         result = ScanResult(source=source, root=root, stats=ScanStats(), filters=FilterSettings())
         created = export_selected(result, self.root / "output", ["html", "csv"])
         self.assertEqual([path.name for path in created], [

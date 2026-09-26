@@ -142,7 +142,10 @@ def export_selected(result: ScanResult, output_dir: Path, formats: list[str]) ->
     root_name = result.root.name.strip()
     # A Windows drive root is represented by Path.name as "E:". Avoid
     # producing filenames such as "E__file_list.csv" after sanitizing it.
-    if len(root_name) == 2 and root_name[1] == ":" and root_name[0].isalpha():
+    if (
+        len(root_name) >= 2 and root_name[1] == ":" and root_name[0].isalpha()
+        and not root_name[2:].strip("\\\\/")
+    ):
         root_name = f"{root_name[0].upper()}_drive"
     safe_name = "".join(char if char not in '<>:"/\\|?*' else "_" for char in root_name).strip(" _.") or "directory"
     suffixes = {"txt": "tree", "html": "index", "csv": "file_list", "json": "tree_data"}
