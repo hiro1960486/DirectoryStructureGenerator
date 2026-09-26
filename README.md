@@ -1,17 +1,20 @@
-# Directory Structure Generator Ver.2.9.1
+# Directory Structure Generator Ver.2.9.2
 
 <img src="docs/DirectoryStructureGenerator_AppIcon_512.png" width="128" alt="Directory Structure Generator icon">
 
 フォルダー構成を走査し、必要な項目だけを **TXT / HTML / CSV / JSON** に出力するWindows向けGUIアプリです。
 
-- Version: 2.9.1
-- Updated: 2026-09-25
+- Version: 2.9.2
+- Updated: 2026-09-26
 - Author: hiro1960
 - UI: PySide6
 - 対応OS: Windows 10 / 11（64ビット推奨）
 - Python: 3.10以上（Python 3.13対応）
 
 ## 今回の主な改善
+
+Ver.2.9.2では、プリセットごとのフォルダー保持と整理コピー設定の集約など、画面操作を改善しました。
+
 
 - 整理コピー後に、保存先、成功・スキップ・失敗・未実行件数を画面で確認可能
 - 「結果CSVを開く」「保存先を開く」「保存後ファイルを表示」を整理コピー画面へ追加
@@ -272,3 +275,4 @@ requirements-build.txt  ビルド・テスト用ライブラリ
 2. アプリと同じフォルダーの`startup_error.log`を開きます。
 3. アプリ内部のエラーは`%LOCALAPPDATA%\DirectoryStructureGenerator\app_error.log`にも保存されます。
 4. 相談するときは、このログを添付してください。
+
