@@ -46,6 +46,8 @@ class PresetManagerDialog(QDialog):
         limit_row.addWidget(QLabel("基本は1件。クイック表示の上限（基本を含む）:"))
         self.quick_limit_spin = QSpinBox()
         self.quick_limit_spin.setRange(1, 99)
+        self.quick_limit_spin.setButtonSymbols(QSpinBox.ButtonSymbols.UpDownArrows)
+        self.quick_limit_spin.setEnabled(True)
         self.quick_limit_spin.setSuffix(" 件")
         self.quick_limit_spin.setValue(self.max_quick_presets)
         self.quick_limit_spin.setToolTip("メイン画面に表示できるクイック設定の最大数を指定します")
@@ -55,7 +57,7 @@ class PresetManagerDialog(QDialog):
         layout.addLayout(limit_row)
 
         self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["基本", "クイック", "順番", "プリセット名", "メモ", "種類"])
+        self.table.setHorizontalHeaderLabels(["既定", "クイック", "順番", "プリセット名", "メモ", "種類"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(
@@ -373,3 +375,4 @@ class PresetManagerDialog(QDialog):
                 quick_count += 1
         self.refresh()
         self._changed()
+

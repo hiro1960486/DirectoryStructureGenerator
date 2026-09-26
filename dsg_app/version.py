@@ -1,11 +1,12 @@
 """Application version information.
 
-Version: 2.9.1
-Updated: 2026-09-25
+Version: 2.9.2
+Updated: 2026-09-26
 Author: hiro1960
 """
 
 APP_NAME = "Directory Structure Generator"
-APP_VERSION = "2.9.1"
-UPDATED = "2026-09-25"
+APP_VERSION = "2.9.2"
+UPDATED = "2026-09-26"
 AUTHOR = "hiro1960"
+

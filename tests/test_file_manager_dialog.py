@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication, QSplitter
 
 from dsg_app.file_inspector import FileDetail
 from dsg_app.file_manager_dialog import (
-    FileManagerDialog, copy_plan_column_widths, copy_result_counts, first_dropped_directory,
+    FileManagerDialog, OrganizerSettingsDialog, copy_plan_column_widths, copy_result_counts, first_dropped_directory,
 )
 from dsg_app.organizer import CopyPlan
 from dsg_app.models import FilterSettings
@@ -95,9 +95,11 @@ class CopyResultButtonStateTests(unittest.TestCase):
         self.output = self.root / "output"
         self.output.mkdir()
         self.dialog = FileManagerDialog(self.root, self.output, FilterSettings())
+        self.defaults = OrganizerSettingsDialog({}, [])
 
     def tearDown(self) -> None:
         self.dialog.close()
+        self.defaults.close()
         self.temp.cleanup()
 
     def test_result_buttons_start_disabled(self) -> None:
@@ -110,27 +112,19 @@ class CopyResultButtonStateTests(unittest.TestCase):
         self.assertTrue(flags & Qt.WindowType.WindowMinMaxButtonsHint)
         self.assertGreaterEqual(self.dialog.height(), self.dialog.minimumHeight())
 
-    def test_result_file_format_defaults_to_csv_and_can_select_xlsx(self) -> None:
-        self.assertTrue(self.dialog.result_csv_radio.isChecked())
-        self.assertTrue(self.dialog.result_csv_radio.isCheckable())
-        self.dialog.result_xlsx_radio.click()
-        self.assertFalse(self.dialog.result_csv_radio.isChecked())
-        self.assertEqual(self.dialog._selected_result_format(), "xlsx")
-        self.assertEqual(self.dialog.organizer_settings["result_format"], "xlsx")
+    def test_copy_result_options_are_managed_only_in_default_settings(self) -> None:
+        self.assertFalse(hasattr(self.dialog, "result_csv_radio"))
+        self.assertTrue(self.defaults.result_csv_radio.isChecked())
+        self.defaults.result_xlsx_radio.click()
+        self.defaults.result_reset_radio.click()
+        values = self.defaults.values()
+        self.assertEqual(values["result_format"], "xlsx")
+        self.assertEqual(values["result_history_mode"], "reset")
 
-    def test_result_history_mode_defaults_to_append_and_can_select_reset(self) -> None:
-        self.assertTrue(self.dialog.result_append_radio.isChecked())
-        self.dialog.result_reset_radio.click()
-        self.assertFalse(self.dialog.result_append_radio.isChecked())
-        self.assertEqual(self.dialog._selected_history_mode(), "reset")
-        self.assertEqual(self.dialog.organizer_settings["result_history_mode"], "reset")
-
-    def test_result_log_directory_is_editable_and_saved_in_settings(self) -> None:
+    def test_result_log_directory_is_editable_in_default_settings(self) -> None:
         history_path = self.root / "履歴"
-        self.dialog.result_directory_edit.setText(str(history_path))
-        self.assertEqual(self.dialog.organizer_settings["result_log_directory"], str(history_path))
-        self.dialog.save_organizer_defaults()
-        self.assertEqual(self.dialog.organizer_settings["result_log_directory"], str(history_path))
+        self.defaults.result_directory.setText(str(history_path))
+        self.assertEqual(self.defaults.values()["result_log_directory"], str(history_path))
 
     def test_organize_tab_has_visible_vertical_resize_handle(self) -> None:
         splitter = self.dialog.findChild(QSplitter, "organizeResizeSplitter")
@@ -214,3 +208,4 @@ class NaturalSortTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
