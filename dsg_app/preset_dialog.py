@@ -32,11 +32,14 @@ class PresetManagerDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("設定プリセット管理")
-        self.resize(820, 520)
+        self.resize(900, 560)
         self.max_quick_presets = max(1, min(99, int(max_quick_presets)))
         self.presets = normalize_presets(presets, self.max_quick_presets)
         self.current_settings = current_settings
         self._updating = False
+        self.order_spin_boxes: list[QSpinBox] = []
+        self.order_up_buttons: list[QPushButton] = []
+        self.order_down_buttons: list[QPushButton] = []
 
         layout = QVBoxLayout(self)
         title = QLabel("設定プリセット")
@@ -91,8 +94,10 @@ class PresetManagerDialog(QDialog):
         self.table.itemChanged.connect(self._on_cell_edited)
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
-        for column in (0, 1, 2, 3, 5):
+        for column in (0, 1, 3, 5):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(2, 124)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table, 1)
 
@@ -132,6 +137,9 @@ class PresetManagerDialog(QDialog):
 
     def refresh(self, selected_name: str = "") -> None:
         self._updating = True
+        self.order_spin_boxes.clear()
+        self.order_up_buttons.clear()
+        self.order_down_buttons.clear()
         self.table.setRowCount(len(self.presets))
         selected_row = 0
         for row, preset in enumerate(self.presets):
@@ -145,11 +153,45 @@ class PresetManagerDialog(QDialog):
             quick.setToolTip(f"メイン画面に表示します（最大{self.max_quick_presets}件）")
             quick.stateChanged.connect(lambda state, index=row: self.toggle_favorite(index, state))
             self.table.setCellWidget(row, 1, self._centered(quick))
+            order_cell = QWidget()
+            order_layout = QHBoxLayout(order_cell)
+            order_layout.setContentsMargins(3, 2, 3, 2)
+            order_layout.setSpacing(4)
             order = QSpinBox()
+            order.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
             order.setRange(1, 99)
+            order.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            order.setFixedSize(68, 40)
+            order.setStyleSheet("QSpinBox { padding:2px; min-height:32px; }")
             order.setValue(int(preset.get("order", row + 1)))
             order.valueChanged.connect(lambda value, index=row: self.set_order(index, value))
-            self.table.setCellWidget(row, 2, order)
+
+            order_arrows = QWidget()
+            arrow_layout = QVBoxLayout(order_arrows)
+            arrow_layout.setContentsMargins(0, 0, 0, 0)
+            arrow_layout.setSpacing(2)
+            up_button = QPushButton("▲")
+            up_button.setToolTip("このプリセットの表示順を1つ上げます")
+            up_button.setAccessibleName(f"順番を上げる: {preset['name']}")
+            up_button.setFixedSize(36, 21)
+            up_button.setStyleSheet("padding:0px; min-height:21px; max-height:21px; font-size:8pt;")
+            up_button.clicked.connect(order.stepUp)
+            down_button = QPushButton("▼")
+            down_button.setToolTip("このプリセットの表示順を1つ下げます")
+            down_button.setAccessibleName(f"順番を下げる: {preset['name']}")
+            down_button.setFixedSize(36, 21)
+            down_button.setStyleSheet("padding:0px; min-height:21px; max-height:21px; font-size:8pt;")
+            down_button.clicked.connect(order.stepDown)
+            arrow_layout.addWidget(up_button)
+            arrow_layout.addWidget(down_button)
+
+            order_layout.addWidget(order)
+            order_layout.addWidget(order_arrows)
+            self.table.setCellWidget(row, 2, order_cell)
+            self.table.setRowHeight(row, 48)
+            self.order_spin_boxes.append(order)
+            self.order_up_buttons.append(up_button)
+            self.order_down_buttons.append(down_button)
             name_item = QTableWidgetItem(str(preset["name"]))
             memo_item = QTableWidgetItem(str(preset.get("memo", "")))
             if preset.get("builtin"):

@@ -320,17 +320,21 @@ class MainWindow(QMainWindow):
         filter_scroll.setFrameShape(QFrame.Shape.NoFrame)
         filter_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         filter_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        filter_scroll.setMinimumHeight(340)
+        filter_scroll.setMinimumHeight(220)
         filter_scroll.setWidget(filters)
         settings_layout.addWidget(filter_scroll, 1)
 
         formats = QGroupBox("3. 出力形式")
-        format_layout = QHBoxLayout(formats)
+        format_layout = QGridLayout(formats)
+        format_layout.setContentsMargins(12, 28, 12, 12)
+        format_layout.setHorizontalSpacing(16)
+        format_layout.setVerticalSpacing(6)
+        formats.setMinimumHeight(96)
         self.format_checks: dict[str, QCheckBox] = {}
-        for key, label in (("txt", "TXTツリー"), ("html", "HTML"), ("csv", "CSV"), ("json", "JSON")):
+        for index, (key, label) in enumerate((("txt", "TXTツリー"), ("html", "HTML"), ("csv", "CSV"), ("json", "JSON"))):
             checkbox = QCheckBox(label)
             self.format_checks[key] = checkbox
-            format_layout.addWidget(checkbox)
+            format_layout.addWidget(checkbox, index // 2, index % 2)
         settings_layout.addWidget(formats)
 
         actions = QHBoxLayout()
