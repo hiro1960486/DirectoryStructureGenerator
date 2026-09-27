@@ -155,6 +155,7 @@ class PresetManagerDialog(QDialog):
         )
         self.table.itemChanged.connect(self._on_cell_edited)
         self.table.currentCellChanged.connect(lambda *_args: self._update_order_buttons())
+        self.table.itemSelectionChanged.connect(self._update_order_buttons)
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
         for column in (0, 1, 3, 5):
