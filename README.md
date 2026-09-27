@@ -1,15 +1,28 @@
-# Directory Structure Generator Ver.2.9.7
+# Directory Structure Generator Ver.2.10.0
 
 <img src="docs/DirectoryStructureGenerator_AppIcon_512.png" width="128" alt="Directory Structure Generator icon">
 
 フォルダー構成を走査し、必要な項目だけを **TXT / HTML / CSV / JSON** に出力するWindows向けGUIアプリです。
 
-- Version: 2.9.7
+- Version: 2.10.0
 - Updated: 2026-09-27
 - Author: hiro1960
 - UI: PySide6
 - 対応OS: Windows 10 / 11（64ビット推奨）
 - Python: 3.10以上（Python 3.13対応）
+
+## 関連アプリの起動
+
+メイン画面上部の「関連アプリ」を開くと、DirectoryStructureGenerator.PresetManagerとRenameWizardの実行ファイルをそれぞれ登録して起動できます。
+
+1. 「参照…」を押し、対象アプリの `.exe` を選びます。
+2. 「起動」を押すとアプリが開きます。
+3. 実行ファイルの場所はユーザー設定へ保存され、次回起動後も保持されます。アプリを移動した場合は参照し直してください。
+
+## Ver.2.10.0 の修正
+
+- メイン画面上部の「関連アプリ」からDirectoryStructureGenerator.PresetManagerとRenameWizardの実行ファイルを指定・起動できます。
+- 実行ファイルの場所はユーザー設定に保存され、次回起動後も保持されます。
 
 ## Ver.2.9.7 の修正
 
@@ -293,4 +306,3 @@ requirements-build.txt  ビルド・テスト用ライブラリ
 2. アプリと同じフォルダーの`startup_error.log`を開きます。
 3. アプリ内部のエラーは`%LOCALAPPDATA%\DirectoryStructureGenerator\app_error.log`にも保存されます。
 4. 相談するときは、このログを添付してください。
-
