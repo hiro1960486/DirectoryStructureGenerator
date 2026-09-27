@@ -95,15 +95,43 @@ class SettingsPresetTests(unittest.TestCase):
         dialog = PresetManagerDialog(builtin_presets(), lambda: {})
         dialog.show()
         app.processEvents()
-        self.assertEqual(len(dialog.order_up_buttons), len(dialog.presets))
-        first_order = dialog.order_spin_boxes[0].value()
-        self.assertGreaterEqual(dialog.order_up_buttons[0].width(), 36)
-        QTest.mouseClick(dialog.order_up_buttons[0], Qt.MouseButton.LeftButton)
+        self.assertEqual(len(dialog.order_spin_boxes), len(dialog.presets))
+        self.assertFalse(hasattr(dialog, "order_up_buttons"))
+        self.assertEqual(dialog.table.horizontalHeaderItem(2).text(), "順番")
+        dialog.table.selectRow(2)
         app.processEvents()
-        self.assertEqual(dialog.order_spin_boxes[0].value(), min(99, first_order + 1))
-        QTest.mouseClick(dialog.order_down_buttons[0], Qt.MouseButton.LeftButton)
+        selected_name = dialog.presets[2]["name"]
+        previous_name = dialog.presets[1]["name"]
+        previous_order = dialog.presets[1]["order"]
+        selected_order = dialog.presets[2]["order"]
+        QTest.mouseClick(dialog.order_up_button, Qt.MouseButton.LeftButton)
         app.processEvents()
-        self.assertEqual(dialog.order_spin_boxes[0].value(), first_order)
+        self.assertEqual(dialog.presets[1]["name"], selected_name)
+        self.assertEqual(dialog.table.currentRow(), 1)
+        self.assertEqual(next(p["order"] for p in dialog.presets if p["name"] == selected_name), previous_order)
+        self.assertEqual(next(p["order"] for p in dialog.presets if p["name"] == previous_name), selected_order)
+        QTest.mouseClick(dialog.order_down_button, Qt.MouseButton.LeftButton)
+        app.processEvents()
+        self.assertEqual(dialog.table.currentRow(), 2)
+        self.assertEqual(dialog.presets[2]["name"], selected_name)
+        dialog.close()
+
+    def test_order_input_waits_for_enter_before_applying_a_partial_number(self) -> None:
+        app = QApplication.instance() or QApplication([])
+        dialog = PresetManagerDialog(builtin_presets(), lambda: {})
+        dialog.show()
+        app.processEvents()
+        target_name = dialog.presets[3]["name"]
+        original_order = dialog.presets[3]["order"]
+        spin = dialog.order_spin_boxes[3]
+        spin.setFocus()
+        spin.lineEdit().selectAll()
+        QTest.keyClicks(spin.lineEdit(), "1")
+        app.processEvents()
+        self.assertEqual(next(p["order"] for p in dialog.presets if p["name"] == target_name), original_order)
+        QTest.keyClick(spin.lineEdit(), Qt.Key.Key_Return)
+        app.processEvents()
+        self.assertEqual(next(p["order"] for p in dialog.presets if p["name"] == target_name), 1)
         dialog.close()
 
     def test_preset_creation_saves_selected_source_and_output_folders(self) -> None:
