@@ -138,10 +138,21 @@ main{{max-width:1100px;margin:32px auto;padding:0 20px}} header{{background:line
 h1{{margin:0 0 6px;font-size:26px}} .source{{word-break:break-all;opacity:.9}} .card{{margin-top:18px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px}}
 .toolbar{{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}} button,input{{border:1px solid var(--line);border-radius:9px;padding:9px 12px;background:var(--card);color:var(--text)}} input{{flex:1;min-width:220px}}
 ul{{list-style:none;padding-left:22px}} li{{margin:3px 0}} summary{{cursor:pointer;font-weight:650}} summary::marker{{color:var(--accent)}} .folder-row{{display:flex;align-items:flex-start;gap:12px}} .folder-row details{{flex:1;min-width:0}} .path-link{{flex:none;font-size:12px;color:var(--accent);text-decoration:none}} .path-link:hover,.file a:hover{{text-decoration:underline}} .file{{display:flex;gap:12px;justify-content:space-between;border-left:2px solid var(--line);padding-left:10px}} .file a{{color:var(--accent);overflow-wrap:anywhere}} small{{color:var(--muted)}} .hidden{{display:none}}
+.link-menu{{position:fixed;z-index:10;display:none;padding:4px;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px #0003}} .link-menu button{{border:0;text-align:left;cursor:pointer;white-space:nowrap}} .link-menu button:hover{{background:#e8efff}}
 </style></head><body><main><header><h1>📁 {html.escape(result.root.name)}</h1><div>{meta}</div><div class="source">{source}</div></header>
 <section class="card"><div class="toolbar"><button onclick="toggle(true)">すべて開く</button><button onclick="toggle(false)">すべて閉じる</button><input id="q" placeholder="名前を検索" oninput="searchTree(this.value)"></div>
 <ul id="tree">{render(result.root)}</ul></section><p><small>{APP_NAME} Ver.{APP_VERSION} · {generated}</small></p></main>
-<script>function toggle(v){{document.querySelectorAll('details').forEach(x=>x.open=v)}}function searchTree(q){{q=q.toLowerCase();document.querySelectorAll('#tree li').forEach(x=>x.classList.toggle('hidden',q&&!x.textContent.toLowerCase().includes(q)));if(q)toggle(true)}}</script>
+<div id="linkMenu" class="link-menu" role="menu"><button type="button" role="menuitem" onclick="openContextLink()">Linkに飛ぶ</button></div>
+<script>
+let contextLink=null;const linkMenu=document.getElementById('linkMenu');
+function toggle(v){{document.querySelectorAll('details').forEach(x=>x.open=v)}}
+function searchTree(q){{q=q.toLowerCase();document.querySelectorAll('#tree li').forEach(x=>x.classList.toggle('hidden',q&&!x.textContent.toLowerCase().includes(q)));if(q)toggle(true)}}
+function hideLinkMenu(){{linkMenu.style.display='none';contextLink=null}}
+function openContextLink(){{if(contextLink)window.open(contextLink.href,'_blank','noopener');hideLinkMenu()}}
+document.addEventListener('contextmenu',event=>{{const link=event.target.closest('#tree a[href]');if(!link)return;event.preventDefault();contextLink=link;linkMenu.style.display='block';linkMenu.style.left=Math.min(event.clientX,window.innerWidth-linkMenu.offsetWidth-8)+'px';linkMenu.style.top=Math.min(event.clientY,window.innerHeight-linkMenu.offsetHeight-8)+'px'}});
+document.addEventListener('click',event=>{{if(!linkMenu.contains(event.target))hideLinkMenu()}});
+document.addEventListener('keydown',event=>{{if(event.key==='Escape')hideLinkMenu()}});
+</script>
 </body></html>"""
     destination.write_text(document, encoding="utf-8")
 

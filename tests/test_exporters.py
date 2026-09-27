@@ -30,7 +30,7 @@ class ExporterTests(unittest.TestCase):
         self.assertIn("docs/", "\n".join(tree_lines(result.root)))
         payload = json.loads((output / "sample_tree_data.json").read_text(encoding="utf-8"))
         self.assertEqual(payload["statistics"]["files"], 2)
-        self.assertEqual(payload["application"]["version"], "2.10.0")
+        self.assertEqual(payload["application"]["version"], "2.11.0")
 
     def test_csv_neutralizes_spreadsheet_formula(self):
         source = self.root / "sample"
@@ -59,6 +59,9 @@ class ExporterTests(unittest.TestCase):
         self.assertIn(f'href="{docs.resolve().as_uri()}"', html_text)
         self.assertIn(f'href="{document.resolve().as_uri()}"', html_text)
         self.assertIn(">場所を開く ↗</a>", html_text)
+        self.assertIn("Linkに飛ぶ", html_text)
+        self.assertIn("function openContextLink()", html_text)
+        self.assertIn("event.target.closest('#tree a[href]')", html_text)
         self.assertIn("function toggle(v)", html_text)
         self.assertIn("function searchTree(q)", html_text)
 

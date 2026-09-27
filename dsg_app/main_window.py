@@ -1,6 +1,6 @@
 """Modern PySide6 user interface.
 
-Version: 2.10.0
+Version: 2.11.0
 Updated: 2026-09-27
 Author: hiro1960
 """

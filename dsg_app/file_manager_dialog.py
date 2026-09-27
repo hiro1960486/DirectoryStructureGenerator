@@ -2170,7 +2170,8 @@ class OrganizerSettingsDialog(QDialog):
         title.setStyleSheet("font-size:16pt;font-weight:700")
         layout.addWidget(title)
         help_label = QLabel(
-            "ここでよく使う設定を決められます。実際の整理コピー画面では、毎回変更できます。"
+            "よく使う設定をここに保存できます。設定を変えない場合は、そのままでも整理コピーを使えます。"
+            "コピー先や記録方法は、整理コピー画面で変更できます。"
         )
         help_label.setWordWrap(True)
         layout.addWidget(help_label)

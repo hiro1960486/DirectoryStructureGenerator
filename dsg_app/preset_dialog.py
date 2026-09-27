@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton, QRadioButton,
@@ -39,7 +39,7 @@ class PresetCreateDialog(QDialog):
         form.addRow("プリセット名", self.name_edit)
         form.addRow("メモ", self.memo_edit)
         form.addRow("1. 対象フォルダー", self._folder_row(self.source_edit, "対象フォルダーを選択"))
-        form.addRow("出力先フォルダー", self._folder_row(self.output_edit, "出力先フォルダーを選択"))
+        form.addRow("出力先", self._folder_row(self.output_edit, "出力先を選択"))
         buttons = QHBoxLayout()
         buttons.addStretch()
         self.save_button = QPushButton("作成")
@@ -86,8 +86,6 @@ class PresetManagerDialog(QDialog):
         self.current_settings = current_settings
         self._updating = False
         self.order_spin_boxes: list[QSpinBox] = []
-        self.order_up_buttons: list[QPushButton] = []
-        self.order_down_buttons: list[QPushButton] = []
 
         layout = QVBoxLayout(self)
         title = QLabel("設定プリセット")
@@ -127,6 +125,22 @@ class PresetManagerDialog(QDialog):
         limit_row.addStretch()
         layout.addLayout(limit_row)
 
+        order_actions = QHBoxLayout()
+        order_actions.addWidget(QLabel("順番"))
+        self.order_up_button = QPushButton("▲")
+        self.order_up_button.setToolTip("選択中のプリセットを1つ上へ移動します")
+        self.order_up_button.setAccessibleName("選択中のプリセットを上へ移動")
+        self.order_down_button = QPushButton("▼")
+        self.order_down_button.setToolTip("選択中のプリセットを1つ下へ移動します")
+        self.order_down_button.setAccessibleName("選択中のプリセットを下へ移動")
+        for button in (self.order_up_button, self.order_down_button):
+            button.setFixedSize(36, 26)
+            order_actions.addWidget(button)
+        order_actions.addStretch()
+        self.order_up_button.clicked.connect(lambda: self.move_selected_order(-1))
+        self.order_down_button.clicked.connect(lambda: self.move_selected_order(1))
+        layout.addLayout(order_actions)
+
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["既定", "クイック", "順番", "プリセット名", "メモ", "種類"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -140,6 +154,8 @@ class PresetManagerDialog(QDialog):
             "QTableWidget::item:selected:!active { background:#3b82f6; color:white; }"
         )
         self.table.itemChanged.connect(self._on_cell_edited)
+        self.table.currentCellChanged.connect(lambda *_args: self._update_order_buttons())
+        self.table.itemSelectionChanged.connect(self._update_order_buttons)
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
         for column in (0, 1, 3, 5):
@@ -186,8 +202,6 @@ class PresetManagerDialog(QDialog):
     def refresh(self, selected_name: str = "") -> None:
         self._updating = True
         self.order_spin_boxes.clear()
-        self.order_up_buttons.clear()
-        self.order_down_buttons.clear()
         self.table.setRowCount(len(self.presets))
         selected_row = 0
         for row, preset in enumerate(self.presets):
@@ -211,35 +225,15 @@ class PresetManagerDialog(QDialog):
             order.setAlignment(Qt.AlignmentFlag.AlignCenter)
             order.setFixedSize(68, 40)
             order.setStyleSheet("QSpinBox { padding:2px; min-height:32px; }")
+            order.setKeyboardTracking(False)
             order.setValue(int(preset.get("order", row + 1)))
-            order.valueChanged.connect(lambda value, index=row: self.set_order(index, value))
-
-            order_arrows = QWidget()
-            arrow_layout = QVBoxLayout(order_arrows)
-            arrow_layout.setContentsMargins(0, 0, 0, 0)
-            arrow_layout.setSpacing(2)
-            up_button = QPushButton("▲")
-            up_button.setToolTip("このプリセットの表示順を1つ上げます")
-            up_button.setAccessibleName(f"順番を上げる: {preset['name']}")
-            up_button.setFixedSize(36, 21)
-            up_button.setStyleSheet("padding:0px; min-height:21px; max-height:21px; font-size:8pt;")
-            up_button.clicked.connect(order.stepUp)
-            down_button = QPushButton("▼")
-            down_button.setToolTip("このプリセットの表示順を1つ下げます")
-            down_button.setAccessibleName(f"順番を下げる: {preset['name']}")
-            down_button.setFixedSize(36, 21)
-            down_button.setStyleSheet("padding:0px; min-height:21px; max-height:21px; font-size:8pt;")
-            down_button.clicked.connect(order.stepDown)
-            arrow_layout.addWidget(up_button)
-            arrow_layout.addWidget(down_button)
-
+            order.editingFinished.connect(
+                lambda box=order, index=row: self.set_order(index, box.value())
+            )
             order_layout.addWidget(order)
-            order_layout.addWidget(order_arrows)
             self.table.setCellWidget(row, 2, order_cell)
             self.table.setRowHeight(row, 48)
             self.order_spin_boxes.append(order)
-            self.order_up_buttons.append(up_button)
-            self.order_down_buttons.append(down_button)
             name_item = QTableWidgetItem(str(preset["name"]))
             memo_item = QTableWidgetItem(str(preset.get("memo", "")))
             if preset.get("builtin"):
@@ -258,6 +252,12 @@ class PresetManagerDialog(QDialog):
         if self.presets:
             self.table.selectRow(selected_row)
         self._updating = False
+        self._update_order_buttons()
+
+    def _update_order_buttons(self) -> None:
+        row = self.selected_index()
+        self.order_up_button.setEnabled(0 < row < len(self.presets))
+        self.order_down_button.setEnabled(0 <= row < len(self.presets) - 1)
 
     @staticmethod
     def _centered(widget: QWidget) -> QWidget:
@@ -284,7 +284,20 @@ class PresetManagerDialog(QDialog):
         name = self.presets[index]["name"]
         self.presets[index]["order"] = value
         self._changed()
-        QTimer.singleShot(0, lambda selected_name=name: self.refresh(selected_name))
+        self.refresh(str(name))
+
+    def move_selected_order(self, direction: int) -> None:
+        """Move the selected preset one position and keep it selected."""
+        row = self.selected_index()
+        target = row + direction
+        if not (0 <= row < len(self.presets) and 0 <= target < len(self.presets)):
+            return
+        selected_name = str(self.presets[row]["name"])
+        self.presets[row]["order"], self.presets[target]["order"] = (
+            self.presets[target]["order"], self.presets[row]["order"]
+        )
+        self._changed()
+        self.refresh(selected_name)
 
     def _on_cell_edited(self, cell: QTableWidgetItem) -> None:
         if self._updating or cell.column() not in (3, 4):
