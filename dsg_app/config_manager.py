@@ -23,6 +23,7 @@ def default_config() -> dict[str, Any]:
         "max_quick_presets": 5,
         "source": "", "output": "", "source_history": [], "output_history": [],
         "organizer_destinations": [],
+        "external_tools": {"preset_manager": "", "rename_wizard": ""},
         "organizer": {
             "default_destination": "", "naming_template": "{name}",
             "custom_template": "{name}", "keep_subfolders": True,
@@ -43,7 +44,7 @@ def load_config() -> dict[str, Any]:
         loaded = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(loaded, dict):
             for key, value in loaded.items():
-                if key in {"formats", "window", "organizer"} and isinstance(value, dict):
+                if key in {"formats", "window", "organizer", "external_tools"} and isinstance(value, dict):
                     defaults[key].update(value)
                 else:
                     defaults[key] = value

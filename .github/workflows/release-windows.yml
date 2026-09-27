@@ -6,7 +6,7 @@ on:
       version:
         description: Release tag such as v2.3.0
         required: true
-        default: v2.9.6
+        default: v2.10.0
 
 permissions:
   contents: write
@@ -69,4 +69,3 @@ jobs:
             --title "Directory Structure Generator Ver.${version}" `
             --notes-file "RELEASE_NOTES_v${version}.md" `
             --latest
-

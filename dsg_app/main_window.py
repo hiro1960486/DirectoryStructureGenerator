@@ -1,7 +1,7 @@
 """Modern PySide6 user interface.
 
-Version: 2.9.5
-Updated: 2026-09-26
+Version: 2.10.0
+Updated: 2026-09-27
 Author: hiro1960
 """
 
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from .config_manager import add_history, load_config, save_config
 from .exporters import export_selected, format_size, tree_lines
 from .file_manager_dialog import FileManagerDialog, OrganizerSettingsDialog
+from .external_tools_dialog import ExternalToolsDialog
 from .models import FilterSettings, PRESETS, ScanResult
 from .preset_dialog import PresetManagerDialog
 from .settings_presets import (
@@ -189,6 +190,11 @@ class MainWindow(QMainWindow):
         preset_settings = QAction("★ プリセット管理", self)
         preset_settings.triggered.connect(self.show_preset_manager)
         toolbar.addAction(preset_settings)
+        toolbar.addSeparator()
+        external_tools = QAction("関連アプリ", self)
+        external_tools.setToolTip("PresetManagerとRenameWizardの実行ファイルを指定・起動します")
+        external_tools.triggered.connect(self.show_external_tools)
+        toolbar.addAction(external_tools)
 
         root = QWidget()
         outer = QVBoxLayout(root)
@@ -783,6 +789,10 @@ class MainWindow(QMainWindow):
         dialog.presetsChanged.connect(self.update_settings_presets)
         dialog.quickLimitChanged.connect(self.update_quick_preset_limit)
         dialog.presetApplied.connect(lambda value: self.apply_settings_preset(str(value.get("name", ""))))
+        dialog.exec()
+
+    def show_external_tools(self) -> None:
+        dialog = ExternalToolsDialog(self.config, self)
         dialog.exec()
 
     @Slot(int)
