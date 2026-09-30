@@ -2,7 +2,6 @@
 
 - [Directory Structure Generator Ver.2.9.0 操作マニュアル（PDF・現在版）](DirectoryStructureGenerator_Ver2.9.0_操作マニュアル.pdf)
 - [Directory Structure Generator Ver.2.9.0 操作マニュアル（PowerPoint・編集用）](DirectoryStructureGenerator_Ver2.9.0_操作マニュアル.pptx)
-- [Ver.2.9.0 受け入れテスト結果（CSV）](Ver2.9.0_ACCEPTANCE_TEST_RESULTS.csv)
 - [Directory Structure Generator Ver.2.8.1 操作マニュアル（PDF・旧版）](DirectoryStructureGenerator_Ver2.8.1_操作マニュアル.pdf)
 - [Directory Structure Generator Ver.2.8.1 操作マニュアル（PowerPoint・旧版）](DirectoryStructureGenerator_Ver2.8.1_操作マニュアル.pptx)
 - [Directory Structure Generator Ver.2.6.0 操作マニュアル（PDF・旧版）](DirectoryStructureGenerator_Ver2.6.0_操作マニュアル.pdf)

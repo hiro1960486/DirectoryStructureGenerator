@@ -209,7 +209,6 @@ target               Rust・Javaなどの生成物
 - 編集用：[Directory Structure Generator Ver.2.9.0 操作マニュアル（PowerPoint）](docs/DirectoryStructureGenerator_Ver2.9.0_操作マニュアル.pptx)
 - 画面画像付きで、初回起動、列のソート・フィルター、右クリック操作、メディア確認、整理コピー、安全設定を説明しています。
 - Ver.2.9.0で追加した整理コピー結果の確認方法と、Excel用コピー結果CSVの見方も掲載しています。
-- [Ver.2.9.0 受け入れテスト結果（CSV）](docs/Ver2.9.0_ACCEPTANCE_TEST_RESULTS.csv)
 
 `START_APP.bat`はCMD画面を勝手に閉じません。起動に失敗した場合は、同じフォルダーの`startup_error.log`に原因を保存して画面にも表示します。
 
